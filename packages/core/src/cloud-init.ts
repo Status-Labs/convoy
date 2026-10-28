@@ -1,16 +1,27 @@
-// First-boot script for agent VMs. Installs the base toolchain and agent CLIs
-// for the default `ubuntu` user. Swap for a pre-baked image once boot time matters.
+// First-boot script for agent VMs, shared by every provider. Creates an
+// `agent` user with the given SSH key and installs the base toolchain and
+// agent CLIs. Swap for a pre-baked image once boot time matters.
 
 export interface CloudInitOptions {
   sshPublicKey: string;
 }
 
-export const VM_USER = "ubuntu";
+// Our own user rather than the image default, which differs per provider
+// (ubuntu on OVH, root on DigitalOcean).
+export const VM_USER = "agent";
 
 export function buildCloudInit({ sshPublicKey }: CloudInitOptions): string {
   return `#cloud-config
-ssh_authorized_keys:
-  - ${sshPublicKey.trim()}
+users:
+  - name: ${VM_USER}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - ${sshPublicKey.trim()}
+
+disable_root: true
+ssh_pwauth: false
 
 package_update: true
 packages:

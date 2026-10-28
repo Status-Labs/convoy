@@ -5,7 +5,7 @@
 
 ## 1. What we're building
 
-A web app where a user signs up, clicks one button, and gets their own **isolated VM on OVHcloud** with AI agent tools already installed. They connect to it and run agents there without risking their own machine.
+A web app where a user signs up, clicks one button, and gets their own **isolated cloud VM** (DigitalOcean, OVHcloud, more later) with AI agent tools already installed. They connect to it and run agents there without risking their own machine.
 
 That's the whole product for v1. We will add features in later iterations.
 
@@ -40,7 +40,7 @@ Goal: from sign-up to a working agent shell in **under 3 minutes**, with no clou
 ```
  CLI ─────────────────┐
                       ▼
- Browser ──► Web app ──► Core library ──► OVHcloud Public Cloud API
+ Browser ──► Web app ──► Core library ──► Cloud provider API (DigitalOcean, OVH)
                    │                        │
                    ▼                        ▼
                Database              User VM (one per user)
@@ -51,7 +51,7 @@ Goal: from sign-up to a working agent shell in **under 3 minutes**, with no clou
 
 Four pieces, nothing more:
 
-- **Core library:** all the OVH logic (create, check, stop, delete VM; cloud-init template). Shared by the CLI and the web app so we write it once.
+- **Core library:** all the VM logic (create, check, stop, delete VM; cloud-init template). Shared by the CLI and the web app so we write it once. Cloud providers plug in behind one small interface (see 4.2).
 - **CLI:** built first to prototype against OVH. Stays useful afterwards for self-hosters and admins.
 - **Web app:** one deployable (UI and API together). Handles auth, shows the dashboard, calls the core library.
 - **Database:** Postgres. Two main tables: `users` and `vms`.
@@ -64,7 +64,11 @@ Four pieces, nothing more:
 - **Invite-only / allowlist** at first, so we control cost before billing exists.
 
 ### 4.2 VM provisioning
-- Use the OVH Public Cloud API (OpenStack under the hood) to create, check, stop and delete instances.
+- **Multiple providers** behind one `VmProvider` interface (create, get, list, delete, list sizes/images), so an outage or account problem at one provider doesn't block us, and self-hosters can pick theirs.
+  - Implemented: **DigitalOcean** (default; REST API with a token) and **OVHcloud** (OpenStack-based Public Cloud API).
+  - Candidates later: Hetzner Cloud (cheapest), Vultr, Scaleway, AWS.
+  - The cloud-init setup script is shared; only the API calls differ per provider.
+- Create, check, stop and delete instances through the provider API.
 - **Fixed choices for v1:** one region, one flavor (size), one Ubuntu LTS image.
 - **Limit: one VM per user.**
 - Track state in the `vms` table: `provisioning`, `booting`, `ready`, `stopped`, `error`, `deleted`.
