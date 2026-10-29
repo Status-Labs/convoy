@@ -66,3 +66,13 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
     },
   };
 }
+
+/** The region, size and image new VMs get unless overridden. */
+export function providerDefaults(config: Config): { region: string; size: string; image: string } {
+  if (config.provider === "ovh") {
+    const { region, flavor, image } = config.ovh;
+    return { region, size: flavor, image };
+  }
+  const { region, size, image } = config.digitalocean;
+  return { region, size, image };
+}

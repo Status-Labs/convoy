@@ -13,6 +13,14 @@ Requires Node.js 22+, pnpm, and a DigitalOcean API token or an OVHcloud Public C
 pnpm install
 cp .env.example .env   # pick PROVIDER and fill in its credentials
 
+pnpm cli               # open the interactive TUI
+```
+
+In the TUI: `n` launches a VM, `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `d` deletes, `q` quits.
+
+The same actions are available as commands for scripting:
+
+```sh
 pnpm cli regions       # check credentials, pick a region
 pnpm cli sizes         # VM sizes and prices in the default region
 pnpm cli create        # launch a VM and wait for tools to install
@@ -26,7 +34,7 @@ pnpm cli --provider ovh list   # use another provider for one command
 ## Layout
 
 - `packages/core`: provider-independent VM logic, one module per cloud provider (`src/providers/`), and the VM setup script (cloud-init), shared by the CLI and the future web app
-- `apps/cli`: the `agent-vm` CLI
+- `apps/cli`: the `agent-vm` TUI and CLI (Ink + commander)
 
 ## License
 

@@ -5,6 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { AgentVms, configFromEnv, createProvider } from "@agent-platform/core";
 import { forgetHostKey, openShell, sshCommand, waitForCloudInit } from "./ssh";
+import { runTui } from "./tui/run";
 
 const repoRootEnv = fileURLToPath(new URL("../../../.env", import.meta.url));
 for (const path of [".env", repoRootEnv]) {
@@ -23,6 +24,8 @@ function expandHome(path: string): string {
   return path.startsWith("~/") ? homedir() + path.slice(1) : path;
 }
 
+const defaultSshKey = process.env.SSH_PUBLIC_KEY_PATH ?? "~/.ssh/id_ed25519.pub";
+
 async function confirm(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(`${question} [y/N] `);
@@ -37,6 +40,11 @@ const program = new Command()
   .hook("preAction", (cmd) => {
     const { provider } = cmd.opts();
     if (provider) process.env.PROVIDER = provider;
+  })
+  // No command: open the interactive TUI.
+  .action(async () => {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) return program.help();
+    await runTui(expandHome(defaultSshKey));
   });
 
 program
@@ -46,7 +54,7 @@ program
   .option("--region <region>", "region (default from .env)")
   .option("--size <size>", "size / flavor name (default from .env)")
   .option("--image <image>", "image name (default from .env)")
-  .option("--ssh-key <path>", "public key to install", process.env.SSH_PUBLIC_KEY_PATH ?? "~/.ssh/id_ed25519.pub")
+  .option("--ssh-key <path>", "public key to install", defaultSshKey)
   .option("--no-wait", "return as soon as the VM is created")
   .action(async (opts) => {
     const sshPublicKey = readFileSync(expandHome(opts.sshKey), "utf8");

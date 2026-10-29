@@ -100,7 +100,7 @@ Billing, teams, multiple VMs per user, VM sizes, region choice, browser terminal
 ## 6. Build order
 
 ### Stage 1: CLI prototype (no web, no database)
-Reads OVH credentials from a config file or env vars. Commands roughly:
+An interactive TUI (`pnpm cli`) for day-to-day use, plus plain subcommands for scripting. Reads OVH credentials from a config file or env vars. Commands roughly:
 
 ```
 agent-vm create      # launch a VM with cloud-init, print SSH command when ready

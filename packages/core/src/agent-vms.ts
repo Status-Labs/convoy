@@ -11,6 +11,10 @@ export interface LaunchOptions {
   image?: string;
 }
 
+export function newVmName(): string {
+  return `${VM_NAME_PREFIX}${randomBytes(3).toString("hex")}`;
+}
+
 /** Provider-independent agent VM operations, used by the CLI and the web app. */
 export class AgentVms {
   constructor(readonly provider: VmProvider) {}
@@ -21,7 +25,7 @@ export class AgentVms {
 
   launch(options: LaunchOptions): Promise<Vm> {
     return this.provider.createVm({
-      name: options.name ?? `${VM_NAME_PREFIX}${randomBytes(3).toString("hex")}`,
+      name: options.name ?? newVmName(),
       userData: buildCloudInit({ sshPublicKey: options.sshPublicKey }),
       region: options.region,
       size: options.size,
