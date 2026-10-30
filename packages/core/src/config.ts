@@ -60,7 +60,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
     provider: "digitalocean",
     digitalocean: {
       token: env.DIGITALOCEAN_TOKEN!,
-      region: env.DO_REGION || "nyc3",
+      region: env.DO_REGION || "nyc1",
       size: env.DO_SIZE || "s-2vcpu-4gb",
       image: env.DO_IMAGE || "ubuntu-24-04-x64",
     },

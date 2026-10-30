@@ -22,7 +22,12 @@ interface DoSize {
   disk: number;
   price_monthly: number;
   available: boolean;
-  regions: string[];
+}
+
+interface DoRegion {
+  slug: string;
+  available: boolean;
+  sizes: string[];
 }
 
 interface DoImage {
@@ -67,10 +72,14 @@ export class DigitalOceanProvider implements VmProvider {
   }
 
   async createVm(request: CreateVmRequest): Promise<Vm> {
+    const region = request.region ?? this.config.region;
+    const size = request.size ?? this.config.size;
+    await this.assertSizeAvailable(region, size);
+
     const { droplet } = await this.request<{ droplet: Droplet }>("POST", "/droplets", {
       name: request.name,
-      region: request.region ?? this.config.region,
-      size: request.size ?? this.config.size,
+      region,
+      size,
       image: request.image ?? this.config.image,
       user_data: request.userData,
       tags: [TAG],
@@ -83,18 +92,37 @@ export class DigitalOceanProvider implements VmProvider {
   }
 
   async listRegions(): Promise<string[]> {
-    const { regions } = await this.request<{ regions: { slug: string; available: boolean }[] }>(
-      "GET",
-      "/regions?per_page=200",
-    );
-    return regions.filter((r) => r.available).map((r) => r.slug);
+    return (await this.regions()).map((r) => r.slug);
   }
 
   async listSizes(region = this.config.region): Promise<Size[]> {
-    const { sizes } = await this.request<{ sizes: DoSize[] }>("GET", "/sizes?per_page=200");
+    const [{ sizes }, regions] = await Promise.all([
+      this.request<{ sizes: DoSize[] }>("GET", "/sizes?per_page=200"),
+      this.regions(),
+    ]);
+    const offered = new Set(regions.find((r) => r.slug === region)?.sizes ?? []);
     return sizes
-      .filter((s) => s.available && s.regions.includes(region))
+      .filter((s) => s.available && offered.has(s.slug))
       .map((s) => ({ name: s.slug, vcpus: s.vcpus, ramGb: s.memory / 1024, diskGb: s.disk, priceMonthly: s.price_monthly }));
+  }
+
+  // A region's `sizes` list is what can actually be created there right now;
+  // the per-size `regions` field on /sizes lags behind capacity changes.
+  private async regions(): Promise<DoRegion[]> {
+    const { regions } = await this.request<{ regions: DoRegion[] }>("GET", "/regions?per_page=200");
+    return regions.filter((r) => r.available);
+  }
+
+  private async assertSizeAvailable(region: string, size: string): Promise<void> {
+    const regions = await this.regions();
+    if (regions.find((r) => r.slug === region)?.sizes.includes(size)) return;
+    const elsewhere = regions.filter((r) => r.sizes.includes(size)).map((r) => r.slug);
+    throw new Error(
+      `${size} isn't available in ${region} right now. ` +
+        (elsewhere.length > 0
+          ? `Available in: ${elsewhere.join(", ")}. Set DO_REGION in .env (or pass --region).`
+          : "It isn't available in any region; pick another size with `pnpm cli sizes`."),
+    );
   }
 
   async listImages(region = this.config.region): Promise<string[]> {
