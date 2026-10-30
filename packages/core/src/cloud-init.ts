@@ -127,6 +127,14 @@ export function buildCloudInit({ sshPublicKey, tools }: CloudInitOptions): strin
     ],
 
     runcmd: [["bash", "/usr/local/lib/agent-vm/bootstrap.sh"]],
+
+    // The first-boot upgrade often installs a new kernel. Reboot once, after
+    // all setup is done, so the VM runs it.
+    power_state: {
+      mode: "reboot",
+      condition: "test -f /var/run/reboot-required",
+      message: "agent-vm: rebooting to apply updates",
+    },
   };
 
   return `#cloud-config\n${stringify(config, { lineWidth: 0 })}`;

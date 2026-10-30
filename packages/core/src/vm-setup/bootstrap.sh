@@ -5,12 +5,25 @@
 set -euo pipefail
 
 AGENT_USER=agent
+AGENT_HOME=/home/$AGENT_USER
 log() { echo "[agent-vm] $*"; }
 
+# No interactive prompts from apt or needrestart (e.g. "pending kernel upgrade").
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
+
 # Run a command as the agent user, with ~/.local/bin (npm prefix) on PATH.
+# runuser, not sudo: sudo refuses to run while root's password is expired.
 as_agent() {
-  sudo -u "$AGENT_USER" -H bash -c 'cd ~ && export PATH="$HOME/.local/bin:$PATH" && '"$1"
+  runuser -u "$AGENT_USER" -- env HOME="$AGENT_HOME" USER="$AGENT_USER" \
+    bash -c 'cd ~ && export PATH="$HOME/.local/bin:$PATH" && '"$1"
 }
+
+# DigitalOcean gives root an expired password when no SSH keys are passed via
+# its API, which breaks sudo and cron for root. Root never logs in here, so
+# lock the password and clear the forced change.
+log "locking root password"
+usermod -L root
+chage -d "$(date +%F)" -M -1 root
 
 log "hardening ssh"
 sshd -t

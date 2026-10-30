@@ -46,17 +46,24 @@ export function forwardPort(ip: string, localPort: number, remotePort: number): 
   );
 }
 
-// Waits for sshd to come up, then until cloud-init finishes on the VM.
-export async function waitForCloudInit(ip: string, timeoutMs = 15 * 60_000): Promise<void> {
+// Exit codes: 0 done, 1 failed, 2 done with warnings (cloud-init >= 23.4),
+// 100 done but a reboot is pending (cloud-init's power_state is about to reboot).
+const CLOUD_INIT_CHECK =
+  "cloud-init status --wait >/dev/null; s=$?; " +
+  "if [ $s -ne 1 ] && [ -f /var/run/reboot-required ]; then exit 100; fi; exit $s";
+
+// Waits for sshd to come up, then until cloud-init finishes on the VM,
+// including the post-setup reboot if there is one.
+export async function waitForCloudInit(ip: string, timeoutMs = 20 * 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const code = await run(
-      [...sshArgs(ip, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]), "cloud-init status --wait"],
+      [...sshArgs(ip, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]), CLOUD_INIT_CHECK],
       "ignore",
     );
-    // 255 = ssh could not connect yet; anything else came from cloud-init.
-    if (code === 0) return;
-    if (code !== 255) {
+    // 255 = ssh could not connect (booting or rebooting); 100 = reboot pending.
+    if (code === 0 || code === 2) return;
+    if (code !== 255 && code !== 100) {
       throw new Error(`setup finished with errors (exit ${code}); see /var/log/cloud-init-output.log on the VM`);
     }
     await new Promise((resolve) => setTimeout(resolve, 5_000));
