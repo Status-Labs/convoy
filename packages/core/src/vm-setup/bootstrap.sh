@@ -6,7 +6,19 @@ set -euo pipefail
 
 AGENT_USER=agent
 AGENT_HOME=/home/$AGENT_USER
-log() { echo "[agent-vm] $*"; }
+STATE_DIR=/var/lib/agent-vm
+
+step="starting"
+log() {
+  step="$*"
+  echo "[agent-vm] $*"
+}
+
+# The CLI reads these markers to report the outcome; cloud-init's own status
+# isn't reliable after a reboot.
+mkdir -p "$STATE_DIR"
+rm -f "$STATE_DIR/ready" "$STATE_DIR/failed"
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then echo "$step" > "$STATE_DIR/failed"; fi' EXIT
 
 # No interactive prompts from apt or needrestart (e.g. "pending kernel upgrade").
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
@@ -26,8 +38,13 @@ usermod -L root
 chage -d "$(date +%F)" -M -1 root
 
 log "hardening ssh"
+# sshd -t needs /run/sshd, which doesn't exist while ssh is socket-activated
+# and idle (the default after some openssh upgrades on Ubuntu 24.04).
+install -d -m 0755 /run/sshd
 sshd -t
-systemctl restart ssh
+# Restart only if running; otherwise the next connection starts sshd with
+# the new config.
+systemctl try-restart ssh.service
 
 log "applying kernel network hardening"
 sysctl --system >/dev/null
@@ -58,6 +75,5 @@ as_agent "sed -i '1i export PATH=\"\$HOME/.local/bin:\$PATH\"' ~/.bashrc"
 # shellcheck source=/dev/null
 . /usr/local/lib/agent-vm/install-tools.sh
 
-mkdir -p /var/lib/agent-vm
-date -u +%FT%TZ > /var/lib/agent-vm/ready
+date -u +%FT%TZ > "$STATE_DIR/ready"
 log "setup complete"

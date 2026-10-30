@@ -46,25 +46,42 @@ export function forwardPort(ip: string, localPort: number, remotePort: number): 
   );
 }
 
-// Exit codes: 0 done, 1 failed, 2 done with warnings (cloud-init >= 23.4),
-// 100 done but a reboot is pending (cloud-init's power_state is about to reboot).
-const CLOUD_INIT_CHECK =
-  "cloud-init status --wait >/dev/null; s=$?; " +
-  "if [ $s -ne 1 ] && [ -f /var/run/reboot-required ]; then exit 100; fi; exit $s";
+// Runs on the VM once cloud-init is idle. Trusts bootstrap.sh's markers, not
+// cloud-init's status, which reads "done" after a reboot even if setup failed.
+// Exit codes: 0 ready, 1 failed (prints the failed step), 100 reboot pending.
+const SETUP_CHECK = [
+  "cloud-init status --wait >/dev/null 2>&1",
+  "if [ -f /var/lib/agent-vm/failed ]; then cat /var/lib/agent-vm/failed; exit 1; fi",
+  "if [ ! -f /var/lib/agent-vm/ready ]; then echo 'setup did not run'; exit 1; fi",
+  "if [ -f /var/run/reboot-required ]; then exit 100; fi",
+  "exit 0",
+].join("; ");
 
-// Waits for sshd to come up, then until cloud-init finishes on the VM,
-// including the post-setup reboot if there is one.
+function capture(args: string[]): Promise<{ code: number; stdout: string }> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    const child = spawn("ssh", args, { stdio: ["ignore", "pipe", "ignore"] });
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.on("exit", (code) => resolve({ code: code ?? 1, stdout: stdout.trim() }));
+    child.on("error", () => resolve({ code: 1, stdout: "" }));
+  });
+}
+
+// Waits for sshd to come up, then until setup finishes on the VM, including
+// the post-setup reboot if there is one.
 export async function waitForCloudInit(ip: string, timeoutMs = 20 * 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const code = await run(
-      [...sshArgs(ip, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]), CLOUD_INIT_CHECK],
-      "ignore",
-    );
+    const { code, stdout } = await capture([
+      ...sshArgs(ip, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]),
+      SETUP_CHECK,
+    ]);
     // 255 = ssh could not connect (booting or rebooting); 100 = reboot pending.
-    if (code === 0 || code === 2) return;
+    if (code === 0) return;
     if (code !== 255 && code !== 100) {
-      throw new Error(`setup finished with errors (exit ${code}); see /var/log/cloud-init-output.log on the VM`);
+      throw new Error(
+        `setup failed at "${stdout || "unknown step"}"; see /var/log/cloud-init-output.log on the VM`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 5_000));
   }
