@@ -186,8 +186,14 @@ program
 program
   .command("regions")
   .description("List available regions")
-  .action(async () => {
-    for (const region of await vms().provider.listRegions()) console.log(region);
+  .option("--size <size>", "only regions where this size can be created right now")
+  .action(async (opts) => {
+    const regions = await vms().provider.listRegions();
+    console.table(
+      regions
+        .filter((r) => !opts.size || r.sizes?.includes(opts.size))
+        .map(({ slug, name }) => ({ region: slug, name })),
+    );
   });
 
 program

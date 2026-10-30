@@ -16,7 +16,7 @@ cp .env.example .env   # pick PROVIDER and fill in its credentials
 pnpm cli               # open the interactive TUI
 ```
 
-In the TUI: `n` launches a VM, `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `d` deletes, `q` quits.
+In the TUI: `n` launches a VM (pick region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `d` deletes, `q` quits.
 
 The same actions are available as commands for scripting:
 

@@ -11,6 +11,14 @@ export interface Vm {
   createdAt: string;
 }
 
+export interface Region {
+  slug: string;
+  /** Human-readable name, e.g. "New York 1". */
+  name: string;
+  /** Sizes that can be created here right now, when the provider says. */
+  sizes?: string[];
+}
+
 export interface Size {
   name: string;
   vcpus: number;
@@ -35,7 +43,7 @@ export interface VmProvider {
   getVm(id: string): Promise<Vm>;
   createVm(request: CreateVmRequest): Promise<Vm>;
   deleteVm(id: string): Promise<void>;
-  listRegions(): Promise<string[]>;
+  listRegions(): Promise<Region[]>;
   listSizes(region?: string): Promise<Size[]>;
   listImages(region?: string): Promise<string[]>;
 }

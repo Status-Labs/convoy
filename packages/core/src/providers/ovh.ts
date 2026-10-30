@@ -1,7 +1,7 @@
 /// <reference path="./ovh-module.d.ts" />
 import ovh from "ovh";
 import type { OvhConfig } from "../config";
-import { ProviderApiError, type CreateVmRequest, type Size, type Vm, type VmProvider, type VmStatus } from "../types";
+import { ProviderApiError, type CreateVmRequest, type Region, type Size, type Vm, type VmProvider, type VmStatus } from "../types";
 import { VM_NAME_PREFIX } from "./shared";
 
 interface OvhInstance {
@@ -95,8 +95,9 @@ export class OvhProvider implements VmProvider {
     await this.request("DELETE", `/instance/${encodeURIComponent(id)}`);
   }
 
-  async listRegions(): Promise<string[]> {
-    return this.request<string[]>("GET", "/region");
+  async listRegions(): Promise<Region[]> {
+    const regions = await this.request<string[]>("GET", "/region");
+    return regions.map((slug) => ({ slug, name: slug }));
   }
 
   async listSizes(region = this.config.region): Promise<Size[]> {

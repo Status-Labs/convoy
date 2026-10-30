@@ -1,5 +1,5 @@
 import type { DigitalOceanConfig } from "../config";
-import { ProviderApiError, type CreateVmRequest, type Size, type Vm, type VmProvider, type VmStatus } from "../types";
+import { ProviderApiError, type CreateVmRequest, type Region, type Size, type Vm, type VmProvider, type VmStatus } from "../types";
 
 const API = "https://api.digitalocean.com/v2";
 
@@ -26,6 +26,7 @@ interface DoSize {
 
 interface DoRegion {
   slug: string;
+  name: string;
   available: boolean;
   sizes: string[];
 }
@@ -101,8 +102,8 @@ export class DigitalOceanProvider implements VmProvider {
     await this.request("DELETE", `/droplets/${encodeURIComponent(id)}`);
   }
 
-  async listRegions(): Promise<string[]> {
-    return (await this.regions()).map((r) => r.slug);
+  async listRegions(): Promise<Region[]> {
+    return (await this.regions()).map(({ slug, name, sizes }) => ({ slug, name, sizes }));
   }
 
   async listSizes(region = this.config.region): Promise<Size[]> {

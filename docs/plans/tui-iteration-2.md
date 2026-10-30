@@ -1,6 +1,6 @@
 # TUI Iteration 2: Regions and Snapshots
 
-> Status: draft for review. Last updated 2026-10-30.
+> Status: R1 done (no Source step yet; it arrives with snapshots in S3). Last updated 2026-10-30.
 > Follows [tui-node-management.md](tui-node-management.md). This iteration pulls M5 (launch form) forward and adds snapshots. The detail view and metrics (M1–M2) come after.
 
 ## 1. Goal
@@ -32,17 +32,17 @@ OVH supports instance snapshots too (`POST /cloud/project/{p}/instance/{id}/snap
 ## 3. Milestones
 
 ### R1: Regions in the launch flow
-- [ ] `n` opens a short launch form instead of jumping to the tool picker:
+- [x] `n` opens a short launch form instead of jumping to the tool picker:
   1. **Source**: a fresh Ubuntu VM, or one of your snapshots (only shown if you have snapshots, see S3).
   2. **Region**: the regions where the chosen size is available right now, with readable names (`nyc1 New York 1`). The last-used region is preselected.
   3. **Size**: the sizes in that region, with vCPU / RAM / disk / $ per month. Defaults to `s-2vcpu-4gb`.
   4. **Tools**: the current tool picker (fresh VMs only; a snapshot already has its tools).
   5. **Confirm** line: `agent-vm-3fa1 · nyc1 · 2 vCPU 4 GB · $24/mo · claude, codex`. Enter launches.
-- [ ] `enter` through every step = launch with the remembered defaults, so the fast path stays one key plus enters.
-- [ ] Remember last choices in `~/.config/agent-vm/prefs.json` (region, size, tools). `.env` values become the first-run defaults only.
-- [ ] Changing region re-filters sizes. If the remembered size isn't offered there, pick the closest available one and say so.
-- [ ] The header shows the current default: `digitalocean · nyc1 · s-2vcpu-4gb`.
-- [ ] CLI parity: `create --region` already exists; add `pnpm cli regions --size s-2vcpu-4gb` to show where a size is available.
+- [x] `enter` through every step = launch with the remembered defaults, so the fast path stays one key plus enters.
+- [x] Remember last choices in `~/.config/agent-vm/prefs.json` (region, size, tools). `.env` values become the first-run defaults only.
+- [x] Changing region re-filters sizes. If the remembered size isn't offered there, say so and let the user pick another (no auto-pick). Sizes under 2 GB RAM are dimmed as too small for agent tools.
+- [x] The header shows the current default: `digitalocean · nyc1 · s-2vcpu-4gb`.
+- [x] CLI parity: `create --region` already exists; add `pnpm cli regions --size s-2vcpu-4gb` to show where a size is available.
 
 ### S1: Take a snapshot
 - [ ] `s` on a VM in the list → confirm panel:

@@ -2,8 +2,11 @@ import { readFileSync } from "node:fs";
 import { useCallback, useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { AGENT_TOOLS, ALL_TOOL_IDS, newVmName, type AgentVms, type ToolId, type Vm } from "@agent-platform/core";
+import { newVmName, type AgentVms, type Vm } from "@agent-platform/core";
+import { saveLaunchPrefs, type LaunchPrefs } from "../prefs";
 import { forgetHostKey, openShell, waitForCloudInit } from "../ssh";
+import { Key } from "./key";
+import { LaunchForm } from "./launch-form";
 
 type Phase = "creating" | "booting" | "installing" | "ready" | "failed";
 
@@ -11,6 +14,7 @@ type Phase = "creating" | "booting" | "installing" | "ready" | "failed";
 interface Job {
   name: string;
   phase: Phase;
+  region: string;
   vmId?: string;
 }
 
@@ -27,7 +31,7 @@ type Message = { text: string; tone: "info" | "success" | "error" } | null;
 
 export interface AppProps {
   vms: AgentVms;
-  summary: string;
+  launchPrefs: LaunchPrefs;
   sshKeyPath: string;
 }
 
@@ -44,7 +48,7 @@ function age(iso: string): string {
   return `${Math.floor(minutes / 1440)}d`;
 }
 
-export function App({ vms, summary, sshKeyPath }: AppProps) {
+export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
   const { exit, suspendTerminal } = useApp();
   const [list, setList] = useState<Vm[] | null>(null);
   const [jobs, setJobs] = useState<Record<string, Job>>({});
@@ -53,7 +57,8 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [picking, setPicking] = useState(false);
-  const [lastTools, setLastTools] = useState<ToolId[]>(ALL_TOOL_IDS);
+  const [launchPrefs, setLaunchPrefs] = useState(initialPrefs);
+  const summary = [vms.provider.name, launchPrefs.region, launchPrefs.size].join(" · ");
 
   const refresh = useCallback(async () => {
     try {
@@ -92,9 +97,10 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
   ];
   const current = Math.min(selected, rows.length - 1);
 
-  async function launch(tools: ToolId[]) {
+  async function launch(choice: LaunchPrefs) {
     setPicking(false);
-    setLastTools(tools);
+    setLaunchPrefs(choice);
+    saveLaunchPrefs(vms.provider.name, choice);
     let sshPublicKey: string;
     try {
       sshPublicKey = readFileSync(sshKeyPath, "utf8");
@@ -104,11 +110,11 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
     }
 
     const name = newVmName();
-    updateJob(name, { phase: "creating" });
+    updateJob(name, { phase: "creating", region: choice.region });
     setSelected(0);
     setMessage(null);
     try {
-      const created = await vms.launch({ sshPublicKey, name, tools });
+      const created = await vms.launch({ sshPublicKey, name, ...choice });
       updateJob(name, { phase: "booting", vmId: created.id });
       void refresh();
       const vm = await vms.waitForRunning(created.id);
@@ -193,7 +199,12 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
     return (
       <Box flexDirection="column" paddingX={1} paddingY={1}>
         {header}
-        <ToolPicker initial={lastTools} onLaunch={launch} onCancel={() => setPicking(false)} />
+        <LaunchForm
+          provider={vms.provider}
+          initial={launchPrefs}
+          onLaunch={launch}
+          onCancel={() => setPicking(false)}
+        />
       </Box>
     );
   }
@@ -268,7 +279,7 @@ function VmTable({ rows, selected }: { rows: Row[]; selected: number }) {
               <Text dimColor={!row.vm?.publicIp}>{row.vm?.publicIp ?? "—"}</Text>
             </Box>
             <Box width={COLUMNS.region}>
-              <Text>{row.vm?.region ?? ""}</Text>
+              <Text>{row.vm?.region ?? row.job?.region ?? ""}</Text>
             </Box>
             <Text dimColor>{row.vm ? age(row.vm.createdAt) : ""}</Text>
           </Box>
@@ -308,82 +319,6 @@ function StatusCell({ row }: { row: Row }) {
     default:
       return <Text dimColor>{row.vm?.providerStatus ?? ""}</Text>;
   }
-}
-
-interface ToolPickerProps {
-  initial: ToolId[];
-  onLaunch: (tools: ToolId[]) => void;
-  onCancel: () => void;
-}
-
-function ToolPicker({ initial, onLaunch, onCancel }: ToolPickerProps) {
-  const [cursor, setCursor] = useState(0);
-  const [chosen, setChosen] = useState<Set<ToolId>>(new Set(initial));
-
-  useInput((input, key) => {
-    if (key.escape || input === "q") return onCancel();
-    if (key.upArrow || input === "k") return setCursor((c) => Math.max(0, c - 1));
-    if (key.downArrow || input === "j") return setCursor((c) => Math.min(AGENT_TOOLS.length - 1, c + 1));
-    if (input === " ") {
-      const id = AGENT_TOOLS[cursor]!.id;
-      return setChosen((current) => {
-        const next = new Set(current);
-        if (!next.delete(id)) next.add(id);
-        return next;
-      });
-    }
-    if (input === "a") {
-      return setChosen((current) => new Set(current.size === AGENT_TOOLS.length ? [] : ALL_TOOL_IDS));
-    }
-    if (key.return) onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id));
-  });
-
-  return (
-    <Box flexDirection="column">
-      <Text bold>New VM: choose tools to install</Text>
-      <Box flexDirection="column" marginTop={1}>
-        {AGENT_TOOLS.map((tool, index) => {
-          const isCursor = index === cursor;
-          const isChosen = chosen.has(tool.id);
-          return (
-            <Box key={tool.id}>
-              <Text color="cyan">{isCursor ? "❯ " : "  "}</Text>
-              <Text color={isChosen ? "green" : undefined} dimColor={!isChosen}>
-                {isChosen ? "[x] " : "[ ] "}
-              </Text>
-              <Box width={16}>
-                <Text bold={isCursor}>{tool.name}</Text>
-              </Box>
-              <Text dimColor>{tool.description}</Text>
-            </Box>
-          );
-        })}
-      </Box>
-
-      <Box marginTop={1} flexDirection="column">
-        <Text dimColor>Always included: security updates, firewall (SSH only), fail2ban,</Text>
-        <Text dimColor>automatic security patches, git, Node.js, Python, tmux.</Text>
-      </Box>
-
-      <Box marginTop={1} gap={2}>
-        <Key k="space" label="toggle" />
-        <Key k="a" label="all/none" />
-        <Key k="⏎" label={chosen.size === 0 ? "launch (no tools)" : `launch (${chosen.size})`} />
-        <Key k="esc" label="cancel" />
-      </Box>
-    </Box>
-  );
-}
-
-function Key({ k, label }: { k: string; label: string }) {
-  return (
-    <Text>
-      <Text bold color="cyan">
-        {k}
-      </Text>
-      <Text dimColor> {label}</Text>
-    </Text>
-  );
 }
 
 export function SetupNeeded({ error }: { error: string }) {
