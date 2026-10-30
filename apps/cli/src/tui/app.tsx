@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { useCallback, useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { newVmName, type AgentVms, type Vm } from "@agent-platform/core";
+import { AGENT_TOOLS, ALL_TOOL_IDS, newVmName, type AgentVms, type ToolId, type Vm } from "@agent-platform/core";
 import { forgetHostKey, openShell, waitForCloudInit } from "../ssh";
 
 type Phase = "creating" | "booting" | "installing" | "ready" | "failed";
@@ -52,6 +52,8 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
   const [selected, setSelected] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
   const [message, setMessage] = useState<Message>(null);
+  const [picking, setPicking] = useState(false);
+  const [lastTools, setLastTools] = useState<ToolId[]>(ALL_TOOL_IDS);
 
   const refresh = useCallback(async () => {
     try {
@@ -90,7 +92,9 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
   ];
   const current = Math.min(selected, rows.length - 1);
 
-  async function launch() {
+  async function launch(tools: ToolId[]) {
+    setPicking(false);
+    setLastTools(tools);
     let sshPublicKey: string;
     try {
       sshPublicKey = readFileSync(sshKeyPath, "utf8");
@@ -104,7 +108,7 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
     setSelected(0);
     setMessage(null);
     try {
-      const created = await vms.launch({ sshPublicKey, name });
+      const created = await vms.launch({ sshPublicKey, name, tools });
       updateJob(name, { phase: "booting", vmId: created.id });
       void refresh();
       const vm = await vms.waitForRunning(created.id);
@@ -159,7 +163,7 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
     }
 
     if (input === "q" || key.escape) return exit();
-    if (input === "n") return void launch();
+    if (input === "n") return setPicking(true);
     if (input === "r") {
       setMessage(null);
       return void refresh();
@@ -174,16 +178,29 @@ export function App({ vms, summary, sshKeyPath }: AppProps) {
       if (!row.id) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
       if (!row.deleting) setConfirmDelete(row);
     }
-  });
+  }, { isActive: !picking });
+
+  const header = (
+    <Box gap={2} marginBottom={1}>
+      <Text bold color="cyan">
+        agent-vm
+      </Text>
+      <Text dimColor>{summary}</Text>
+    </Box>
+  );
+
+  if (picking) {
+    return (
+      <Box flexDirection="column" paddingX={1} paddingY={1}>
+        {header}
+        <ToolPicker initial={lastTools} onLaunch={launch} onCancel={() => setPicking(false)} />
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Box gap={2} marginBottom={1}>
-        <Text bold color="cyan">
-          agent-vm
-        </Text>
-        <Text dimColor>{summary}</Text>
-      </Box>
+      {header}
 
       {list === null ? (
         <Spinner label="Loading VMs…" />
@@ -291,6 +308,71 @@ function StatusCell({ row }: { row: Row }) {
     default:
       return <Text dimColor>{row.vm?.providerStatus ?? ""}</Text>;
   }
+}
+
+interface ToolPickerProps {
+  initial: ToolId[];
+  onLaunch: (tools: ToolId[]) => void;
+  onCancel: () => void;
+}
+
+function ToolPicker({ initial, onLaunch, onCancel }: ToolPickerProps) {
+  const [cursor, setCursor] = useState(0);
+  const [chosen, setChosen] = useState<Set<ToolId>>(new Set(initial));
+
+  useInput((input, key) => {
+    if (key.escape || input === "q") return onCancel();
+    if (key.upArrow || input === "k") return setCursor((c) => Math.max(0, c - 1));
+    if (key.downArrow || input === "j") return setCursor((c) => Math.min(AGENT_TOOLS.length - 1, c + 1));
+    if (input === " ") {
+      const id = AGENT_TOOLS[cursor]!.id;
+      return setChosen((current) => {
+        const next = new Set(current);
+        if (!next.delete(id)) next.add(id);
+        return next;
+      });
+    }
+    if (input === "a") {
+      return setChosen((current) => new Set(current.size === AGENT_TOOLS.length ? [] : ALL_TOOL_IDS));
+    }
+    if (key.return) onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id));
+  });
+
+  return (
+    <Box flexDirection="column">
+      <Text bold>New VM: choose tools to install</Text>
+      <Box flexDirection="column" marginTop={1}>
+        {AGENT_TOOLS.map((tool, index) => {
+          const isCursor = index === cursor;
+          const isChosen = chosen.has(tool.id);
+          return (
+            <Box key={tool.id}>
+              <Text color="cyan">{isCursor ? "❯ " : "  "}</Text>
+              <Text color={isChosen ? "green" : undefined} dimColor={!isChosen}>
+                {isChosen ? "[x] " : "[ ] "}
+              </Text>
+              <Box width={16}>
+                <Text bold={isCursor}>{tool.name}</Text>
+              </Box>
+              <Text dimColor>{tool.description}</Text>
+            </Box>
+          );
+        })}
+      </Box>
+
+      <Box marginTop={1} flexDirection="column">
+        <Text dimColor>Always included: security updates, firewall (SSH only), fail2ban,</Text>
+        <Text dimColor>automatic security patches, git, Node.js, Python, tmux.</Text>
+      </Box>
+
+      <Box marginTop={1} gap={2}>
+        <Key k="space" label="toggle" />
+        <Key k="a" label="all/none" />
+        <Key k="⏎" label={chosen.size === 0 ? "launch (no tools)" : `launch (${chosen.size})`} />
+        <Key k="esc" label="cancel" />
+      </Box>
+    </Box>
+  );
 }
 
 function Key({ k, label }: { k: string; label: string }) {

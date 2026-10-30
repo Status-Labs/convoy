@@ -1,10 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { buildCloudInit } from "./cloud-init";
 import { VM_NAME_PREFIX } from "./providers";
+import type { ToolId } from "./tools";
 import type { Vm, VmProvider } from "./types";
 
 export interface LaunchOptions {
   sshPublicKey: string;
+  tools: ToolId[];
   name?: string;
   region?: string;
   size?: string;
@@ -26,7 +28,7 @@ export class AgentVms {
   launch(options: LaunchOptions): Promise<Vm> {
     return this.provider.createVm({
       name: options.name ?? newVmName(),
-      userData: buildCloudInit({ sshPublicKey: options.sshPublicKey }),
+      userData: buildCloudInit({ sshPublicKey: options.sshPublicKey, tools: options.tools }),
       region: options.region,
       size: options.size,
       image: options.image,

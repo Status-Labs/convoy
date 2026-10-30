@@ -33,6 +33,19 @@ export function openShell(ip: string): Promise<number> {
   return run(sshArgs(ip), "inherit");
 }
 
+export function runRemote(ip: string, command: string): Promise<number> {
+  return run([...sshArgs(ip), command], "inherit");
+}
+
+// Tunnels localhost:<localPort> to <remotePort> on the VM until interrupted.
+// Nothing is opened on the VM's firewall.
+export function forwardPort(ip: string, localPort: number, remotePort: number): Promise<number> {
+  return run(
+    [...sshArgs(ip, ["-N", "-o", "ExitOnForwardFailure=yes", "-L", `${localPort}:localhost:${remotePort}`])],
+    "inherit",
+  );
+}
+
 // Waits for sshd to come up, then until cloud-init finishes on the VM.
 export async function waitForCloudInit(ip: string, timeoutMs = 15 * 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

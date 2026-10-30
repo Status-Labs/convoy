@@ -76,7 +76,9 @@ Four pieces, nothing more:
 
 ### 4.3 Preinstalled tools
 - Installed by a **cloud-init script** at first boot. Easy to change while we iterate.
-- Starting set: git, Node.js, Python, Claude Code, Codex CLI, common build tools.
+- **User picks tools** at creation: Claude Code, Codex CLI, agent-browser, OpenCode (catalog in `packages/core/src/tools.ts`).
+- Always installed: git, Node.js, Python, common build tools, tmux.
+- Every VM gets the **security baseline**: upgrades + automatic security updates, hardened SSH, ufw (SSH only), fail2ban, and Docker ports closed unless explicitly exposed (see README).
 - The script calls back to our API when finished, which flips the VM to `ready`.
 - Later, bake a base image (snapshot) so boot is faster.
 
