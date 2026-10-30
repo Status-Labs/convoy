@@ -42,6 +42,16 @@ const STATUS: Record<string, VmStatus> = {
   archive: "stopped",
 };
 
+const MAX_RATE_LIMIT_RETRIES = 3;
+
+// Honors Retry-After when present, else backs off exponentially (2s, 4s, 8s),
+// capped at a minute so a long hourly reset surfaces as an error instead.
+function retryDelayMs(res: Response, attempt: number): number {
+  const retryAfter = Number(res.headers.get("retry-after"));
+  const seconds = retryAfter > 0 ? retryAfter : 2 ** (attempt + 1);
+  return Math.min(seconds, 60) * 1000;
+}
+
 function toVm(droplet: Droplet): Vm {
   const publicV4 = droplet.networks.v4.find((n) => n.type === "public");
   return {
@@ -130,7 +140,9 @@ export class DigitalOceanProvider implements VmProvider {
     return images.filter((i) => i.slug && i.regions.includes(region)).map((i) => i.slug!);
   }
 
-  private async request<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+  // DigitalOcean allows 5,000 requests/hour and 250/minute per token. On a 429
+  // the request wasn't processed, so it's safe to wait and retry, even a POST.
+  private async request<T = unknown>(method: string, path: string, body?: unknown, attempt = 0): Promise<T> {
     const res = await fetch(API + path, {
       method,
       headers: {
@@ -139,6 +151,10 @@ export class DigitalOceanProvider implements VmProvider {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    if (res.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs(res, attempt)));
+      return this.request<T>(method, path, body, attempt + 1);
+    }
     if (!res.ok) {
       const error = (await res.json().catch(() => ({}))) as { message?: string };
       throw new ProviderApiError(this.name, res.status, error.message ?? res.statusText);
