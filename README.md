@@ -18,6 +18,8 @@ pnpm cli               # open the interactive TUI
 
 In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `d` deletes, `q` quits.
 
+The list shows each VM's hourly rate and its estimated cost so far this month, with totals at the top. Estimates come from list prices and run time: DigitalOcean bills per second (60s minimum, capped at the monthly price), so compute matches the bill; AWS rates come from the AWS Pricing API (needs `pricing:GetProducts`) and include the 40 GB disk and public IPv4 address. Not included: extra bandwidth, snapshots, and AWS burst-credit charges. DigitalOcean bills stopped VMs in full, which the list flags as `stopped, billed`.
+
 The same actions are available as commands for scripting:
 
 ```sh

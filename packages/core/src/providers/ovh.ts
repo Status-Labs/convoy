@@ -89,6 +89,8 @@ function toVm(instance: OvhInstance): Vm {
     region: instance.region,
     publicIp: publicV4?.ip ?? null,
     createdAt: instance.created,
+    // OVH prices come from a separate catalog API; not wired up yet.
+    pricing: null,
   };
 }
 

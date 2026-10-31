@@ -12,6 +12,10 @@ Two things a user can't do today:
 
 Keep it simple: one new form, one new list, a handful of keys.
 
+### Done alongside R1
+- [x] Multiple clouds side by side (DigitalOcean, AWS, OVHcloud) with a Cloud step in the launch form.
+- [x] Cost on the dashboard: `$/HR` and `THIS MONTH` columns per VM and totals in the header, estimated from list prices and run time (`core/src/cost.ts`). Later: show DigitalOcean's billed figure next to it (invoice preview, refreshed daily, matched by resource id).
+
 ## 2. What DigitalOcean gives us
 
 | Feature | API | Notes |

@@ -3,7 +3,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { ALL_TOOL_IDS, Fleet, PROVIDERS, configFromEnv, parseToolIds, type Cloud } from "@agent-platform/core";
+import {
+  ALL_TOOL_IDS,
+  Fleet,
+  PROVIDERS,
+  configFromEnv,
+  formatCost,
+  formatRate,
+  hourlyRate,
+  monthToDateCost,
+  parseToolIds,
+  type Cloud,
+} from "@agent-platform/core";
 import { forgetHostKey, forwardPort, openShell, runRemote, sshCommand, waitForCloudInit } from "./ssh";
 import { runTui } from "./tui/run";
 
@@ -118,15 +129,21 @@ program
     for (const { provider, message } of errors) console.error(`Couldn't list ${provider} VMs: ${message}`);
     if (vms.length === 0) return console.log("No agent VMs.");
     console.table(
-      vms.map(({ name, provider, id, status, region, publicIp, createdAt }) => ({
-        name,
-        provider,
-        id,
-        status,
-        region,
-        publicIp,
-        createdAt,
-      })),
+      vms.map((vm) => {
+        const rate = hourlyRate(vm);
+        const cost = monthToDateCost(vm);
+        return {
+          name: vm.name,
+          provider: vm.provider,
+          id: vm.id,
+          status: vm.status,
+          region: vm.region,
+          publicIp: vm.publicIp,
+          "$/hr": rate === null ? "" : formatRate(rate),
+          "this month (est.)": cost === null ? "" : formatCost(cost),
+          createdAt: vm.createdAt,
+        };
+      }),
     );
   });
 

@@ -9,6 +9,18 @@ export interface Vm {
   region: string;
   publicIp: string | null;
   createdAt: string;
+  /** List prices for this VM, or null when the provider doesn't say. */
+  pricing: VmPricing | null;
+}
+
+/** Prices in USD. Used to estimate cost; see cost.ts. */
+export interface VmPricing {
+  /** Per hour while running, including disk and IP charges. */
+  hourly: number;
+  /** Per hour while stopped: DigitalOcean bills stopped droplets in full, AWS only the disk. */
+  stoppedHourly: number;
+  /** Billing never exceeds this per calendar month (DigitalOcean), or null. */
+  monthlyCap: number | null;
 }
 
 export interface Region {

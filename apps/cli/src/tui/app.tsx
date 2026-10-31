@@ -2,7 +2,15 @@ import { readFileSync } from "node:fs";
 import { useCallback, useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { newVmName, type Fleet, type FleetVm } from "@agent-platform/core";
+import {
+  formatCost,
+  formatRate,
+  hourlyRate,
+  monthToDateCost,
+  newVmName,
+  type Fleet,
+  type FleetVm,
+} from "@agent-platform/core";
 import { saveLaunchPrefs, type LaunchPrefs } from "../prefs";
 import { forgetHostKey, openShell, waitForCloudInit } from "../ssh";
 import { Key } from "./key";
@@ -37,6 +45,8 @@ export interface AppProps {
 }
 
 const REFRESH_MS = 10_000;
+// Costs are computed locally from list prices, so they can tick between refreshes.
+const COST_TICK_MS = 5_000;
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -64,6 +74,12 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath }: AppProps) 
     `next: ${fleet.cloud(launchPrefs.provider).label} ${launchPrefs.region} ${launchPrefs.size}`,
   ].join(" · ");
   const providerLabels = Object.fromEntries(fleet.clouds.map((c) => [c.name, c.label]));
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), COST_TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -198,11 +214,14 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath }: AppProps) 
   }, { isActive: !picking });
 
   const header = (
-    <Box gap={2} marginBottom={1}>
-      <Text bold color="cyan">
-        agent-vm
-      </Text>
-      <Text dimColor>{summary}</Text>
+    <Box flexDirection="column" marginBottom={1}>
+      <Box gap={2}>
+        <Text bold color="cyan">
+          agent-vm
+        </Text>
+        <Text dimColor>{summary}</Text>
+      </Box>
+      {list && list.length > 0 ? <CostSummary vms={list} now={now} /> : null}
     </Box>
   );
 
@@ -231,7 +250,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath }: AppProps) 
           No agent VMs yet. Press <Text bold color="cyan">n</Text> to launch one.
         </Text>
       ) : (
-        <VmTable rows={rows} selected={current} providerLabels={providerLabels} />
+        <VmTable rows={rows} selected={current} providerLabels={providerLabels} now={now} />
       )}
 
       <Box marginTop={1}>
@@ -260,15 +279,31 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath }: AppProps) 
   );
 }
 
-const COLUMNS = { name: 18, status: 22, ip: 17, cloud: 14, region: 11 };
+const COLUMNS = { name: 18, status: 19, ip: 16, cloud: 14, region: 11, rate: 9, cost: 12 };
+
+// Total rate and month-to-date cost of the listed VMs, from list prices.
+function CostSummary({ vms, now }: { vms: FleetVm[]; now: Date }) {
+  const running = vms.filter((vm) => vm.status === "running").length;
+  const priced = vms.filter((vm) => vm.pricing);
+  const rate = priced.reduce((sum, vm) => sum + (hourlyRate(vm) ?? 0), 0);
+  const cost = priced.reduce((sum, vm) => sum + (monthToDateCost(vm, now) ?? 0), 0);
+  const unpriced = vms.length - priced.length;
+  return (
+    <Text>
+      {running} running · <Text bold>{formatRate(rate)}/hr</Text> · <Text bold>{formatCost(cost)}</Text> this month
+      <Text dimColor> (est.{unpriced > 0 ? `, ${unpriced} without prices` : ""})</Text>
+    </Text>
+  );
+}
 
 interface VmTableProps {
   rows: Row[];
   selected: number;
   providerLabels: Record<string, string>;
+  now: Date;
 }
 
-function VmTable({ rows, selected, providerLabels }: VmTableProps) {
+function VmTable({ rows, selected, providerLabels, now }: VmTableProps) {
   return (
     <Box flexDirection="column">
       <Box>
@@ -279,6 +314,8 @@ function VmTable({ rows, selected, providerLabels }: VmTableProps) {
           {"IP".padEnd(COLUMNS.ip)}
           {"CLOUD".padEnd(COLUMNS.cloud)}
           {"REGION".padEnd(COLUMNS.region)}
+          {"$/HR".padEnd(COLUMNS.rate)}
+          {"THIS MONTH".padEnd(COLUMNS.cost)}
           AGE
         </Text>
       </Box>
@@ -302,12 +339,24 @@ function VmTable({ rows, selected, providerLabels }: VmTableProps) {
             <Box width={COLUMNS.region}>
               <Text>{row.vm?.region ?? row.job?.region ?? ""}</Text>
             </Box>
+            <Box width={COLUMNS.rate}>
+              <CostCell value={row.vm ? hourlyRate(row.vm) : undefined} format={formatRate} />
+            </Box>
+            <Box width={COLUMNS.cost}>
+              <CostCell value={row.vm ? monthToDateCost(row.vm, now) : undefined} format={formatCost} />
+            </Box>
             <Text dimColor>{row.vm ? age(row.vm.createdAt) : ""}</Text>
           </Box>
         );
       })}
     </Box>
   );
+}
+
+// undefined: not created yet; null: the provider has no prices.
+function CostCell({ value, format }: { value: number | null | undefined; format: (n: number) => string }) {
+  if (value === undefined) return <Text> </Text>;
+  return value === null ? <Text dimColor>—</Text> : <Text>{format(value)}</Text>;
 }
 
 const PHASE_LABELS: Record<Phase, string> = {
@@ -334,7 +383,12 @@ function StatusCell({ row }: { row: Row }) {
     case "provisioning":
       return <Spinner label="starting" />;
     case "stopped":
-      return <Text dimColor>○ stopped</Text>;
+      // DigitalOcean keeps billing stopped VMs in full; only delete stops it.
+      return row.vm.pricing && row.vm.pricing.stoppedHourly >= row.vm.pricing.hourly ? (
+        <Text color="yellow">○ stopped, billed</Text>
+      ) : (
+        <Text dimColor>○ stopped</Text>
+      );
     case "error":
       return <Text color="red">✗ error</Text>;
     default:

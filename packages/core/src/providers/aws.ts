@@ -15,6 +15,7 @@ import {
   type _InstanceType,
   type Instance,
 } from "@aws-sdk/client-ec2";
+import { GetProductsCommand, PricingClient, type Filter as PricingFilter } from "@aws-sdk/client-pricing";
 import {
   ProviderApiError,
   type CreateVmRequest,
@@ -22,6 +23,7 @@ import {
   type Region,
   type Size,
   type Vm,
+  type VmPricing,
   type VmProvider,
   type VmStatus,
 } from "../types";
@@ -114,7 +116,31 @@ function parseVmId(id: string): { region: string; instanceId: string } {
   return { region, instanceId };
 }
 
-function toVm(instance: Instance, region: string): Vm {
+// AWS's convention for monthly prices.
+const HOURS_PER_MONTH = 730;
+// Every public IPv4 address, flat across regions since February 2024.
+const PUBLIC_IPV4_HOURLY = 0.005;
+// Prices change rarely; failed lookups (e.g. no pricing:GetProducts permission) retry sooner.
+const PRICE_TTL_MS = 24 * 3600_000;
+const PRICE_FAILURE_TTL_MS = 10 * 60_000;
+
+// Pulls the on-demand USD price out of a Pricing API product document.
+function onDemandUsd(priceList: unknown[] = []): number | null {
+  for (const item of priceList) {
+    const product = JSON.parse(String(item)) as {
+      terms?: { OnDemand?: Record<string, { priceDimensions: Record<string, { pricePerUnit: { USD?: string } }> }> };
+    };
+    for (const term of Object.values(product.terms?.OnDemand ?? {})) {
+      for (const dimension of Object.values(term.priceDimensions)) {
+        const usd = Number(dimension.pricePerUnit.USD);
+        if (usd > 0) return usd;
+      }
+    }
+  }
+  return null;
+}
+
+function toVm(instance: Instance, region: string, pricing: VmPricing | null): Vm {
   const state = instance.State?.Name ?? "unknown";
   return {
     id: vmId(region, instance.InstanceId!),
@@ -124,6 +150,7 @@ function toVm(instance: Instance, region: string): Vm {
     region,
     publicIp: instance.PublicIpAddress ?? null,
     createdAt: instance.LaunchTime?.toISOString() ?? new Date().toISOString(),
+    pricing,
   };
 }
 
@@ -132,6 +159,9 @@ export class AwsProvider implements VmProvider {
   readonly name = "aws";
   private readonly clients = new Map<string, EC2Client>();
   private enabledRegions?: Promise<string[]>;
+  // The Pricing API is served from us-east-1 and covers every region.
+  private readonly pricingClient = new PricingClient({ region: "us-east-1" });
+  private readonly prices = new Map<string, { expires: number; value: Promise<VmPricing | null> }>();
 
   constructor(private readonly config: AwsConfig) {}
 
@@ -188,7 +218,7 @@ export class AwsProvider implements VmProvider {
         }),
       ),
     );
-    return toVm(Instances![0]!, region);
+    return toVm(Instances![0]!, region, await this.pricing(region, instanceType));
   }
 
   async deleteVm(id: string): Promise<void> {
@@ -206,13 +236,14 @@ export class AwsProvider implements VmProvider {
     const { InstanceTypes = [] } = await this.call(region, (ec2) =>
       ec2.send(new DescribeInstanceTypesCommand({ InstanceTypes: offered as _InstanceType[] })),
     );
-    return InstanceTypes.map((t) => ({
+    const prices = await Promise.all(InstanceTypes.map((t) => this.pricing(region, t.InstanceType!)));
+    return InstanceTypes.map((t, i) => ({
       name: t.InstanceType!,
       vcpus: t.VCpuInfo?.DefaultVCpus ?? 0,
       ramGb: (t.MemoryInfo?.SizeInMiB ?? 0) / 1024,
       diskGb: ROOT_DISK_GB,
-      // The EC2 API doesn't return prices; that needs the separate Pricing API.
-      priceMonthly: null,
+      // Includes the root disk and public IP, like the per-VM rate.
+      priceMonthly: prices[i] ? Math.round(prices[i].hourly * HOURS_PER_MONTH * 100) / 100 : null,
     }));
   }
 
@@ -247,7 +278,9 @@ export class AwsProvider implements VmProvider {
         ),
       );
       for (const reservation of page.Reservations ?? []) {
-        for (const instance of reservation.Instances ?? []) vms.push(toVm(instance, region));
+        for (const instance of reservation.Instances ?? []) {
+          vms.push(toVm(instance, region, await this.pricing(region, instance.InstanceType!)));
+        }
       }
       NextToken = page.NextToken;
     } while (NextToken);
@@ -341,6 +374,54 @@ export class AwsProvider implements VmProvider {
       ),
     );
     return GroupId!;
+  }
+
+  /** On-demand Linux price for the instance plus its root disk and public IP. */
+  private pricing(region: string, instanceType: string): Promise<VmPricing | null> {
+    const key = `${region}/${instanceType}`;
+    const hit = this.prices.get(key);
+    if (hit && hit.expires > Date.now()) return hit.value;
+
+    const value = Promise.all([
+      this.price([
+        ["instanceType", instanceType],
+        ["regionCode", region],
+        ["operatingSystem", "Linux"],
+        ["tenancy", "Shared"],
+        ["preInstalledSw", "NA"],
+        ["capacitystatus", "Used"],
+        ["licenseModel", "No License required"],
+      ]),
+      this.price([
+        ["productFamily", "Storage"],
+        ["volumeApiName", "gp3"],
+        ["regionCode", region],
+      ]),
+    ]).then(
+      ([computeHourly, diskPerGbMonth]) => {
+        if (computeHourly === null || diskPerGbMonth === null) return null;
+        const diskHourly = (ROOT_DISK_GB * diskPerGbMonth) / HOURS_PER_MONTH;
+        // A stopped instance releases its public IP and stops compute billing; the disk remains.
+        return { hourly: computeHourly + diskHourly + PUBLIC_IPV4_HOURLY, stoppedHourly: diskHourly, monthlyCap: null };
+      },
+      () => null,
+    );
+    this.prices.set(key, { expires: Date.now() + PRICE_TTL_MS, value });
+    void value.then((pricing) => {
+      if (pricing === null) this.prices.set(key, { expires: Date.now() + PRICE_FAILURE_TTL_MS, value });
+    });
+    return value;
+  }
+
+  private async price(filters: [string, string][]): Promise<number | null> {
+    const { PriceList } = await this.pricingClient.send(
+      new GetProductsCommand({
+        ServiceCode: "AmazonEC2",
+        Filters: filters.map(([Field, Value]): PricingFilter => ({ Type: "TERM_MATCH", Field, Value })),
+        MaxResults: 10,
+      }),
+    );
+    return onDemandUsd(PriceList);
   }
 
   private client(region: string): EC2Client {

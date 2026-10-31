@@ -45,6 +45,9 @@ importers:
       '@aws-sdk/client-ec2':
         specifier: ^3.1161.0
         version: 3.1161.0
+      '@aws-sdk/client-pricing':
+        specifier: ^3.1161.0
+        version: 3.1161.0
       ovh:
         specifier: ^2.0.3
         version: 2.0.3
@@ -60,6 +63,10 @@ packages:
 
   '@aws-sdk/client-ec2@3.1161.0':
     resolution: {integrity: sha512-t6VH4lWaU/rYVjJ2RQbyT5MAMzKSZyas/K5yOwutPhznmcW2HN4WNZQkkOLp17rp1DTESAZs6HJ8HovQ5JwlqQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-pricing@3.1161.0':
+    resolution: {integrity: sha512-laLE7y9vYjFJCpshXgCOoM2sqlYh1Yosajvfd7R6wzsv1QZwy2GYHRVceXbYiez2avRGOabNlzGv1QP1QP5uaQ==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.979.1':
@@ -560,6 +567,17 @@ snapshots:
       '@aws-sdk/core': 3.979.1
       '@aws-sdk/credential-provider-node': 3.972.92
       '@aws-sdk/middleware-sdk-ec2': 3.972.68
+      '@aws-sdk/types': 3.975.0
+      '@smithy/core': 3.38.1
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.14.1
+      '@smithy/types': 4.19.0
+      tslib: 2.9.1
+
+  '@aws-sdk/client-pricing@3.1161.0':
+    dependencies:
+      '@aws-sdk/core': 3.979.1
+      '@aws-sdk/credential-provider-node': 3.972.92
       '@aws-sdk/types': 3.975.0
       '@smithy/core': 3.38.1
       '@smithy/fetch-http-handler': 5.8.0

@@ -47,6 +47,7 @@ interface Droplet {
   created_at: string;
   region: { slug: string };
   networks: { v4: { ip_address: string; type: string }[] };
+  size: { price_hourly: number; price_monthly: number };
 }
 
 interface DoSize {
@@ -97,6 +98,12 @@ function toVm(droplet: Droplet): Vm {
     region: droplet.region.slug,
     publicIp: publicV4?.ip_address ?? null,
     createdAt: droplet.created_at,
+    // Stopped droplets are billed in full; only deleting stops the charge.
+    pricing: {
+      hourly: droplet.size.price_hourly,
+      stoppedHourly: droplet.size.price_hourly,
+      monthlyCap: droplet.size.price_monthly,
+    },
   };
 }
 
