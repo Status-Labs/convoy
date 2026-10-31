@@ -1,4 +1,5 @@
-export type VmStatus = "provisioning" | "running" | "stopped" | "error" | "unknown";
+// asleep: put to sleep by agent-vm (see VmProvider.sleepVm); costs only storage.
+export type VmStatus = "provisioning" | "running" | "stopped" | "asleep" | "error" | "unknown";
 
 export interface Vm {
   id: string;
@@ -19,7 +20,7 @@ export interface Vm {
 export interface VmPricing {
   /** Per hour while running, including disk and IP charges. */
   hourly: number;
-  /** Per hour while stopped: DigitalOcean bills stopped droplets in full, AWS only the disk. */
+  /** Per hour while stopped or asleep: DigitalOcean bills stopped droplets in full, AWS only the disk. */
   stoppedHourly: number;
   /** Billing never exceeds this per calendar month (DigitalOcean), or null. */
   monthlyCap: number | null;
@@ -62,6 +63,22 @@ export interface VmProvider {
   listRegions(): Promise<Region[]>;
   listSizes(region?: string): Promise<Size[]>;
   listImages(region?: string): Promise<string[]>;
+
+  /**
+   * How sleep works on this provider, or undefined if it can't sleep VMs.
+   * snapshot: the VM is snapshotted and deleted; waking creates a new VM.
+   * stop: the VM is stopped and started again.
+   */
+  readonly sleepKind?: "snapshot" | "stop";
+  /** Puts a running VM to sleep. Reports steps through onStep. */
+  sleepVm?(id: string, onStep?: (step: string) => void): Promise<void>;
+  /**
+   * Wakes an asleep VM and returns it, usually still starting. The id may
+   * change (snapshot-based sleep). `userData` is used if a new VM is created.
+   */
+  wakeVm?(id: string, userData: string): Promise<Vm>;
+  /** Cleans up after a woken VM is running (e.g. deletes the sleep snapshot). */
+  finishWake?(asleepId: string): Promise<void>;
 }
 
 /** The region, size and image new VMs get unless the user picks others. */

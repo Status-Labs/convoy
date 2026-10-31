@@ -10,7 +10,7 @@ const MIN_BILLED_SECONDS = 60;
 /** USD per hour this VM costs right now, or null if unknown. */
 export function hourlyRate(vm: Vm): number | null {
   if (!vm.pricing) return null;
-  return vm.status === "stopped" ? vm.pricing.stoppedHourly : vm.pricing.hourly;
+  return vm.status === "stopped" || vm.status === "asleep" ? vm.pricing.stoppedHourly : vm.pricing.hourly;
 }
 
 /**
@@ -31,6 +31,8 @@ export function monthToDateCost(vm: Vm, now: Date = new Date()): number | null {
 
 /** "$0.036" for rates, which are often under a cent per hour. */
 export function formatRate(usdPerHour: number): string {
+  // A sleeping VM's snapshot costs fractions of a cent per hour.
+  if (usdPerHour > 0 && usdPerHour < 0.001) return "<$0.001";
   return `$${usdPerHour < 1 ? usdPerHour.toFixed(3) : usdPerHour.toFixed(2)}`;
 }
 

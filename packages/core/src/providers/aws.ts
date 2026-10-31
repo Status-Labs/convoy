@@ -11,6 +11,8 @@ import {
   DescribeVpcsCommand,
   EC2Client,
   RunInstancesCommand,
+  StartInstancesCommand,
+  StopInstancesCommand,
   TerminateInstancesCommand,
   type _InstanceType,
   type Instance,
@@ -103,7 +105,8 @@ const STATUS: Record<string, VmStatus> = {
   pending: "provisioning",
   running: "running",
   stopping: "stopped",
-  stopped: "stopped",
+  // A stopped instance costs only its disk, so it's what sleeping means here.
+  stopped: "asleep",
 };
 
 // AWS ids are only unique within a region, so ours carry it: "us-east-1/i-0abc...".
@@ -222,6 +225,26 @@ export class AwsProvider implements VmProvider {
       ),
     );
     return toVm(Instances![0]!, region, await this.pricing(region, instanceType));
+  }
+
+  // Stopping releases the public IP and stops compute billing; the disk stays.
+  readonly sleepKind = "stop";
+
+  async sleepVm(id: string, onStep: (step: string) => void = () => {}): Promise<void> {
+    const { region, instanceId } = parseVmId(id);
+    onStep("stopping");
+    await this.call(region, (ec2) => ec2.send(new StopInstancesCommand({ InstanceIds: [instanceId] })));
+    const deadline = Date.now() + 10 * 60_000;
+    while ((await this.getVm(id)).status !== "asleep") {
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${instanceId} to stop`);
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+
+  async wakeVm(id: string): Promise<Vm> {
+    const { region, instanceId } = parseVmId(id);
+    await this.call(region, (ec2) => ec2.send(new StartInstancesCommand({ InstanceIds: [instanceId] })));
+    return this.getVm(id);
   }
 
   async deleteVm(id: string): Promise<void> {

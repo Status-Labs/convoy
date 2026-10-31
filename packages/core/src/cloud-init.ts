@@ -139,3 +139,28 @@ export function buildCloudInit({ sshPublicKey, tools }: CloudInitOptions): strin
 
   return `#cloud-config\n${stringify(config, { lineWidth: 0 })}`;
 }
+
+/**
+ * cloud-init for a VM woken from a sleep snapshot. Everything from the first
+ * setup is already on the disk, so this only redoes what a new machine
+ * resets: the agent user's SSH key and DigitalOcean's expired root password.
+ * The `ready` marker from the first setup is on the disk too, so the CLI's
+ * usual setup check works unchanged.
+ */
+export function buildWakeCloudInit(sshPublicKey: string): string {
+  const config = {
+    users: [
+      {
+        name: VM_USER,
+        groups: ["sudo"],
+        shell: "/bin/bash",
+        sudo: "ALL=(ALL) NOPASSWD:ALL",
+        ssh_authorized_keys: [sshPublicKey.trim()],
+      },
+    ],
+    disable_root: true,
+    ssh_pwauth: false,
+    runcmd: [["bash", "-c", 'usermod -L root && chage -d "$(date +%F)" -M -1 root']],
+  };
+  return `#cloud-config\n${stringify(config, { lineWidth: 0 })}`;
+}

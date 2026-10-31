@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { buildCloudInit } from "./cloud-init";
+import { buildCloudInit, buildWakeCloudInit } from "./cloud-init";
 import { VM_NAME_PREFIX } from "./providers";
 import type { ToolId } from "./tools";
 import type { Vm, VmProvider } from "./types";
@@ -35,6 +35,23 @@ export class AgentVms {
       size: options.size,
       image: options.image,
     });
+  }
+
+  /** Puts a running VM to sleep; see VmProvider.sleepKind. */
+  async sleep(vm: Vm, onStep?: (step: string) => void): Promise<void> {
+    if (!this.provider.sleepVm) throw new Error(`Sleeping VMs isn't supported on ${this.provider.name} yet.`);
+    if (vm.status !== "running") throw new Error(`${vm.name} is ${vm.status}; only running VMs can sleep.`);
+    await this.provider.sleepVm(vm.id, onStep);
+  }
+
+  /** Wakes an asleep VM and waits until it's running with a public IP. */
+  async wake(vm: Vm, sshPublicKey: string): Promise<Vm> {
+    if (!this.provider.wakeVm) throw new Error(`Sleeping VMs isn't supported on ${this.provider.name} yet.`);
+    if (vm.status !== "asleep") throw new Error(`${vm.name} isn't asleep (${vm.status}).`);
+    const woken = await this.provider.wakeVm(vm.id, buildWakeCloudInit(sshPublicKey));
+    const running = await this.waitForRunning(woken.id);
+    await this.provider.finishWake?.(vm.id);
+    return running;
   }
 
   async findVm(idOrName: string): Promise<Vm> {

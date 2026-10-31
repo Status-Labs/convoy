@@ -16,7 +16,12 @@ cp .env.example .env   # fill in credentials for one or more providers
 pnpm cli               # open the interactive TUI
 ```
 
-In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `l` signs in the agent tools, `p` switches project, `d` deletes, `q` quits.
+In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `l` signs in the agent tools, `s` puts a VM to sleep and `w` wakes it, `p` switches project, `d` deletes, `q` quits.
+
+**Sleep** a VM you're not using so it costs only storage, and wake it when you need it, with its disk exactly as you left it:
+- **DigitalOcean** bills powered-off droplets in full, so sleep shuts the droplet down, snapshots it, and deletes it. Waking creates a new droplet from the snapshot (same name, size, region and project) and deletes the snapshot. A snapshot costs $0.06 per GB of disk in use per month: a VM with ~3 GB in use goes from $24/mo to about $0.16/mo. In testing, sleeping took about 1 minute and waking about 1.5 minutes.
+- **AWS** stops the instance: you pay only for its disk (~$3.20/mo for 40 GB) until you start it again.
+- Either way the VM gets a new IP when it wakes, and running programs stop. OVHcloud doesn't support sleep yet.
 
 **Projects** group VMs, e.g. one per codebase or client. Press `p` to create or switch projects; new VMs launch into the current one and the list shows only its VMs (or all projects). A VM's project is stored as a tag on the VM at the cloud provider (DigitalOcean tag `agent-vm-project:<name>`, AWS tag `agent-vm-project`), so it's the same from any machine. OVHcloud doesn't support projects yet.
 
@@ -41,6 +46,8 @@ pnpm cli --provider aws create   # launch on a non-default cloud
 pnpm cli --project my-app create # launch into a project
 pnpm cli --project my-app list   # only that project's VMs
 pnpm cli projects                # projects and their VM counts
+pnpm cli sleep <name>            # stop paying for compute until you wake it
+pnpm cli wake <name>
 ```
 
 ## What every VM gets

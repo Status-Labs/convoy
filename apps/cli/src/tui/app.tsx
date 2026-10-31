@@ -38,6 +38,8 @@ interface Row {
   vm?: FleetVm;
   job?: Job;
   deleting: boolean;
+  /** Sleep/wake step in progress. */
+  busy?: string;
 }
 
 type Message = { text: string; tone: "info" | "success" | "error" } | null;
@@ -72,6 +74,9 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
+  const [confirmSleep, setConfirmSleep] = useState<Row | null>(null);
+  // Sleep/wake in progress, by VM name (waking can change the VM's id): the current step.
+  const [busy, setBusy] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<Message>(null);
   const [picking, setPicking] = useState(false);
   const [launchPrefs, setLaunchPrefs] = useState(initialPrefs);
@@ -131,9 +136,54 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       vm,
       job: jobs[vm.name],
       deleting: deleting.has(vm.id),
+      busy: busy[vm.name],
     })),
   ];
   const current = Math.min(selected, rows.length - 1);
+
+  const setStep = (name: string, step: string | null) =>
+    setBusy(({ [name]: _, ...rest }) => (step ? { ...rest, [name]: step } : rest));
+
+  async function sleepVm(row: Row) {
+    const vm = row.vm!;
+    setStep(vm.name, "going to sleep");
+    try {
+      await fleet.cloud(vm.provider).vms.sleep(vm, (step) => setStep(vm.name, step));
+      if (vm.publicIp) forgetHostKey(vm.publicIp);
+      setMessage({ text: `${vm.name} is asleep. Press w to wake it.`, tone: "success" });
+    } catch (err) {
+      setMessage({ text: `Couldn't put ${vm.name} to sleep: ${errorText(err)}`, tone: "error" });
+    } finally {
+      setStep(vm.name, null);
+      void refresh();
+    }
+  }
+
+  async function wakeVm(row: Row) {
+    const vm = row.vm!;
+    let sshPublicKey: string;
+    try {
+      sshPublicKey = readFileSync(sshKeyPath, "utf8");
+    } catch {
+      setMessage({ text: `Can't read SSH public key at ${sshKeyPath}. Set SSH_PUBLIC_KEY_PATH in .env.`, tone: "error" });
+      return;
+    }
+    setStep(vm.name, "waking");
+    try {
+      const woken = await fleet.cloud(vm.provider).vms.wake(vm, sshPublicKey);
+      void refresh();
+      // A new IP may have belonged to another machine before.
+      forgetHostKey(woken.publicIp!);
+      setStep(vm.name, "starting up");
+      await waitForCloudInit(woken.publicIp!);
+      setMessage({ text: `${vm.name} is awake at ${woken.publicIp}. Press enter to connect.`, tone: "success" });
+    } catch (err) {
+      setMessage({ text: `Couldn't wake ${vm.name}: ${errorText(err)}`, tone: "error" });
+    } finally {
+      setStep(vm.name, null);
+      void refresh();
+    }
+  }
 
   async function launch(choice: LaunchPrefs, count: number) {
     setPicking(false);
@@ -233,6 +283,11 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       setConfirmDelete(null);
       return;
     }
+    if (confirmSleep) {
+      if (input.toLowerCase() === "y") void sleepVm(confirmSleep);
+      setConfirmSleep(null);
+      return;
+    }
 
     if (input === "q" || key.escape) return exit();
     if (input === "n") return setPicking(true);
@@ -246,8 +301,24 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
 
     const row = rows[current];
     if (!row) return;
+    if (row.busy) return setMessage({ text: `${row.name} is ${row.busy}…`, tone: "info" });
+    const asleep = row.vm?.status === "asleep";
+    if (asleep && (key.return || input === "l")) {
+      return setMessage({ text: `${row.name} is asleep. Press w to wake it.`, tone: "info" });
+    }
     if (key.return) return void connect(row);
     if (input === "l") return void signIn(row);
+    if (input === "w") {
+      if (!asleep) return setMessage({ text: `${row.name} isn't asleep.`, tone: "info" });
+      return void wakeVm(row);
+    }
+    if (input === "s") {
+      if (row.vm?.status !== "running") return setMessage({ text: `Only running VMs can sleep.`, tone: "info" });
+      if (!fleet.cloud(row.vm.provider).vms.provider.sleepKind) {
+        return setMessage({ text: `Sleep isn't supported on ${providerLabels[row.vm.provider]} yet.`, tone: "info" });
+      }
+      return setConfirmSleep(row);
+    }
     if (input === "d") {
       if (!row.id) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
       if (!row.deleting) setConfirmDelete(row);
@@ -339,6 +410,8 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
           <Text color="yellow">
             Delete {confirmDelete.name}? This destroys the VM and everything on it. <Text bold>y/N</Text>
           </Text>
+        ) : confirmSleep ? (
+          <SleepConfirm vm={confirmSleep.vm!} kind={fleet.cloud(confirmSleep.vm!.provider).vms.provider.sleepKind!} />
         ) : message ? (
           <Text color={message.tone === "error" ? "red" : message.tone === "success" ? "green" : undefined}>
             {message.tone === "error" ? "✗ " : message.tone === "success" ? "✓ " : ""}
@@ -353,6 +426,8 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         <Key k="n" label="new" />
         <Key k="⏎" label="connect" />
         <Key k="l" label="sign in" />
+        <Key k="s" label="sleep" />
+        <Key k="w" label="wake" />
         <Key k="d" label="delete" />
         <Key k="p" label="project" />
         <Key k="r" label="refresh" />
@@ -461,8 +536,31 @@ const PHASE_LABELS: Record<Phase, string> = {
   failed: "setup failed",
 };
 
+function SleepConfirm({ vm, kind }: { vm: FleetVm; kind: "snapshot" | "stop" }) {
+  const now = vm.pricing ? `${formatRate(vm.pricing.hourly)}/hr` : "its running price";
+  return kind === "snapshot" ? (
+    <Box flexDirection="column">
+      <Text color="yellow">
+        Put {vm.name} to sleep? It's shut down, snapshotted and deleted until you wake it: {now} becomes $0.06 per GB
+        of disk in use per month.
+      </Text>
+      <Text color="yellow">
+        Sleeping and waking each take a minute or two (longer for big disks); it gets a new IP. Running programs
+        stop. The snapshot includes everything on the disk, including signed-in credentials. <Text bold>y/N</Text>
+      </Text>
+    </Box>
+  ) : (
+    <Text color="yellow">
+      Put {vm.name} to sleep? It's stopped until you wake it, and you pay only for its disk
+      {vm.pricing ? ` (${formatRate(vm.pricing.stoppedHourly)}/hr)` : ""}. It gets a new IP when it wakes. Running
+      programs stop. <Text bold>y/N</Text>
+    </Text>
+  );
+}
+
 function StatusCell({ row }: { row: Row }) {
   if (row.deleting) return <Spinner label="deleting" />;
+  if (row.busy) return <Spinner label={row.busy} />;
 
   const phase = row.job?.phase;
   if (phase === "creating" || phase === "booting" || phase === "installing") {
@@ -476,6 +574,8 @@ function StatusCell({ row }: { row: Row }) {
       return <Text color="green">● running</Text>;
     case "provisioning":
       return <Spinner label="starting" />;
+    case "asleep":
+      return <Text color="blue">☾ asleep</Text>;
     case "stopped":
       // DigitalOcean keeps billing stopped VMs in full; only delete stops it.
       return row.vm.pricing && row.vm.pricing.stoppedHourly >= row.vm.pricing.hourly ? (

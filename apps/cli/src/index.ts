@@ -208,6 +208,39 @@ program
   });
 
 program
+  .command("sleep <vm>")
+  .description("Put a VM to sleep so it costs only storage (DigitalOcean: snapshot + delete; AWS: stop)")
+  .option("-y, --yes", "skip confirmation")
+  .action(async (idOrName: string, opts) => {
+    const { vm, cloud } = await fleet().findVm(idOrName);
+    const kind = cloud.vms.provider.sleepKind;
+    if (kind === "snapshot") {
+      console.warn(
+        `${vm.name} will be shut down, snapshotted and deleted until you wake it. Running programs stop, ` +
+          "and the snapshot includes everything on the disk, including signed-in credentials.",
+      );
+    }
+    if (!opts.yes && !(await confirm(`Put ${vm.name} to sleep?`))) return console.log("Cancelled.");
+    await cloud.vms.sleep(vm, (step) => console.log(`  ${step}...`));
+    if (vm.publicIp) forgetHostKey(vm.publicIp);
+    console.log(`${vm.name} is asleep. Wake it with: pnpm cli wake ${vm.name}`);
+  });
+
+program
+  .command("wake <vm>")
+  .description("Wake a sleeping VM and wait until it's ready (it gets a new IP)")
+  .option("--ssh-key <path>", "public key to install", defaultSshKey)
+  .action(async (idOrName: string, opts) => {
+    const { vm, cloud } = await fleet().findVm(idOrName);
+    console.log(`Waking ${vm.name}...`);
+    const woken = await cloud.vms.wake(vm, readFileSync(expandHome(opts.sshKey), "utf8"));
+    forgetHostKey(woken.publicIp!);
+    console.log(`  public IP: ${woken.publicIp}`);
+    await waitForCloudInit(woken.publicIp!);
+    console.log(`Ready. Connect with: pnpm cli ssh ${vm.name}`);
+  });
+
+program
   .command("delete <vm>")
   .description("Delete an agent VM (id or name)")
   .option("-y, --yes", "skip confirmation")

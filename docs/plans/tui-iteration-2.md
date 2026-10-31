@@ -71,7 +71,7 @@ OVH supports instance snapshots too (`POST /cloud/project/{p}/instance/{id}/snap
 - [ ] Verify after launch: same markers check as today, plus the security baseline still holds (ufw active, sshd config) via a lightweight `agent-vm-doctor` script that ships on every VM.
 
 ### S4: Park and copy (stretch)
-- [ ] **Park** (`P`): Safe snapshot, then delete the VM after the snapshot completes, with a confirmation that shows the savings (`$24/mo → ~$0.40/mo`). **Restore** = launch from that snapshot with the same name.
+- [x] **Park** shipped as **sleep/wake** (`s`/`w`, `pnpm cli sleep|wake`): graceful shutdown → snapshot → tag (`agent-vm-asleep`, size, project) → delete; wake recreates the droplet with a small wake cloud-init (`buildWakeCloudInit`: SSH key + re-lock root's password) and deletes the snapshot. On AWS it's stop/start. Tested on DigitalOcean: sleep 58s, wake 90s, 2.68 GB snapshot; disk, baseline and locked root survived.
 - [ ] Copy a snapshot to another region (`c` on the Snapshots screen) via the `transfer` action, with progress.
 
 ## 4. Snapshot restore: what has to happen on first boot
