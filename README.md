@@ -67,6 +67,8 @@ pnpm cli firewall <vm>         # what's open
 
 On the VM itself the same thing is `sudo agent-vm-firewall status|expose|unexpose <port>`.
 
+More detail, including troubleshooting: [docs/port-forwarding.md](docs/port-forwarding.md).
+
 ## Layout
 
 - `packages/core`: provider-independent VM logic, the tool catalog (`src/tools.ts`), the VM setup scripts (`src/vm-setup/`), one module per cloud provider (`src/providers/`; add a provider by writing a `ProviderDefinition` and listing it in `providers/index.ts`), and the VM setup script (cloud-init), shared by the CLI and the future web app
