@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { VM_USER } from "@agent-platform/core";
+import { VM_USER, keySetupScript, type AgentKeys } from "@agent-platform/core";
 
 // VMs get recycled IPs, so keep their host keys out of ~/.ssh/known_hosts.
 const KNOWN_HOSTS = join(homedir(), ".config", "agent-vm", "known_hosts");
@@ -35,6 +35,30 @@ export function openShell(ip: string): Promise<number> {
 
 export function runRemote(ip: string, command: string): Promise<number> {
   return run([...sshArgs(ip), command], "inherit");
+}
+
+// Runs a bash script on the VM, passed on stdin so secrets in it never show up
+// in command lines or process listings.
+export function runScript(ip: string, script: string): Promise<{ code: number; stderr: string }> {
+  return new Promise((resolve) => {
+    let stderr = "";
+    const child = spawn("ssh", [...sshArgs(ip, ["-o", "BatchMode=yes"]), "bash -s"], {
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("exit", (code) => resolve({ code: code ?? 1, stderr: stderr.trim() }));
+    child.on("error", (err) => resolve({ code: 1, stderr: err.message }));
+    child.stdin.end(script);
+  });
+}
+
+/** Configures the VM's agent tools with the API keys from .env. */
+export async function installKeys(ip: string, keys: AgentKeys): Promise<boolean> {
+  const script = keySetupScript(keys);
+  if (!script) return false;
+  const { code, stderr } = await runScript(ip, script);
+  if (code !== 0) throw new Error(`couldn't set up API keys on the VM: ${stderr || `exit ${code}`}`);
+  return true;
 }
 
 // Tunnels localhost:<localPort> to <remotePort> on the VM until interrupted.

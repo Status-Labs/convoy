@@ -20,6 +20,8 @@ In the TUI: `n` launches a VM (pick cloud → region → size → tools; press e
 
 The list shows each VM's hourly rate and its estimated cost so far this month, with totals at the top. Estimates come from list prices and run time: DigitalOcean bills per second (60s minimum, capped at the monthly price), so compute matches the bill; AWS rates come from the AWS Pricing API (needs `pricing:GetProducts`) and include the 40 GB disk and public IPv4 address. Not included: extra bandwidth, snapshots, and AWS burst-credit charges. DigitalOcean bills stopped VMs in full, which the list flags as `stopped, billed`.
 
+**Signing in agent tools.** Put `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in `.env` and every new VM's Claude Code, Codex and OpenCode are ready to use without signing in. Claude Code on agent VMs requires an Anthropic API key, to stay within Anthropic's terms. See [docs/agent-credentials.md](docs/agent-credentials.md).
+
 The same actions are available as commands for scripting:
 
 ```sh
@@ -29,6 +31,7 @@ pnpm cli sizes         # VM sizes and prices in the default region
 pnpm cli create        # launch a VM and wait for tools to install
 pnpm cli list          # VMs on every enabled cloud
 pnpm cli ssh <name>
+pnpm cli keys <name>   # re-apply API keys from .env to a VM
 pnpm cli delete <name>
 
 pnpm cli --provider aws create   # launch on a non-default cloud

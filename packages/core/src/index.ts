@@ -6,3 +6,4 @@ export * from "./providers";
 export * from "./agent-vms";
 export * from "./fleet";
 export * from "./cost";
+export * from "./credentials";

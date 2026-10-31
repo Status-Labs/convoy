@@ -1,7 +1,16 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { AGENT_TOOLS, ALL_TOOL_IDS, type Fleet, type Region, type Size, type ToolId } from "@agent-platform/core";
+import {
+  AGENT_TOOLS,
+  keyStatus,
+  missingKey,
+  type AgentKeys,
+  type Fleet,
+  type Region,
+  type Size,
+  type ToolId,
+} from "@agent-platform/core";
 import { placementFor, type LaunchPrefs } from "../prefs";
 import { Key } from "./key";
 
@@ -26,12 +35,13 @@ type Loadable<T> = { state: "loading" } | { state: "error"; error: string } | { 
 export interface LaunchFormProps {
   fleet: Fleet;
   initial: LaunchPrefs;
+  keys: AgentKeys;
   onLaunch: (choice: LaunchPrefs) => void;
   onCancel: () => void;
 }
 
 /** n → provider → region → size → tools. Enter on every step launches with the last choices. */
-export function LaunchForm({ fleet, initial, onLaunch, onCancel }: LaunchFormProps) {
+export function LaunchForm({ fleet, initial, keys, onLaunch, onCancel }: LaunchFormProps) {
   const [step, setStep] = useState<Step>("provider");
   const [providerName, setProviderName] = useState(initial.provider);
   const [region, setRegion] = useState(initial.region);
@@ -123,6 +133,7 @@ export function LaunchForm({ fleet, initial, onLaunch, onCancel }: LaunchFormPro
         {step === "tools" && (
           <ToolStep
             initial={initial.tools}
+            keys={keys}
             summary={`${cloud.label} ${region} · ${sizeLabel(size, sizeInfo)}`}
             onLaunch={(tools) => onLaunch({ provider: providerName, region, size, tools })}
             onBack={() => setStep("size")}
@@ -429,14 +440,17 @@ function SizeList({ list, region, size, onPick, onBack }: Omit<SizeStepProps, "s
 
 interface ToolStepProps {
   initial: ToolId[];
+  keys: AgentKeys;
   summary: string;
   onLaunch: (tools: ToolId[]) => void;
   onBack: () => void;
 }
 
-function ToolStep({ initial, summary, onLaunch, onBack }: ToolStepProps) {
+function ToolStep({ initial, keys, summary, onLaunch, onBack }: ToolStepProps) {
+  // Tools missing a required API key can't be picked.
+  const available = AGENT_TOOLS.filter((tool) => !missingKey(tool.id, keys)).map((tool) => tool.id);
   const [cursor, setCursor] = useState(0);
-  const [chosen, setChosen] = useState<Set<ToolId>>(new Set(initial));
+  const [chosen, setChosen] = useState<Set<ToolId>>(new Set(initial.filter((id) => available.includes(id))));
 
   useInput((input, key) => {
     if (key.escape) return onBack();
@@ -444,6 +458,7 @@ function ToolStep({ initial, summary, onLaunch, onBack }: ToolStepProps) {
     if (key.downArrow || input === "j") return setCursor((c) => Math.min(AGENT_TOOLS.length - 1, c + 1));
     if (input === " ") {
       const id = AGENT_TOOLS[cursor]!.id;
+      if (!available.includes(id)) return;
       return setChosen((current) => {
         const next = new Set(current);
         if (!next.delete(id)) next.add(id);
@@ -451,7 +466,7 @@ function ToolStep({ initial, summary, onLaunch, onBack }: ToolStepProps) {
       });
     }
     if (input === "a") {
-      return setChosen((current) => new Set(current.size === AGENT_TOOLS.length ? [] : ALL_TOOL_IDS));
+      return setChosen((current) => new Set(current.size === available.length ? [] : available));
     }
     if (key.return) onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id));
   });
@@ -461,6 +476,7 @@ function ToolStep({ initial, summary, onLaunch, onBack }: ToolStepProps) {
       {AGENT_TOOLS.map((tool, index) => {
         const isCursor = index === cursor;
         const isChosen = chosen.has(tool.id);
+        const status = keyStatus(tool.id, keys);
         return (
           <Box key={tool.id}>
             <Text color="cyan">{isCursor ? "❯ " : "  "}</Text>
@@ -470,7 +486,14 @@ function ToolStep({ initial, summary, onLaunch, onBack }: ToolStepProps) {
             <Box width={16}>
               <Text bold={isCursor}>{tool.name}</Text>
             </Box>
-            <Text dimColor>{tool.description}</Text>
+            <Box width={44}>
+              <Text dimColor>{tool.description}</Text>
+            </Box>
+            {status && (
+              <Text color={status.ok ? undefined : "yellow"} dimColor={status.ok}>
+                {status.text}
+              </Text>
+            )}
           </Box>
         );
       })}

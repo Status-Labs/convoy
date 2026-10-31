@@ -8,11 +8,12 @@ import {
   hourlyRate,
   monthToDateCost,
   newVmName,
+  type AgentKeys,
   type Fleet,
   type FleetVm,
 } from "@agent-platform/core";
 import { saveLaunchPrefs, type LaunchPrefs } from "../prefs";
-import { forgetHostKey, openShell, waitForCloudInit } from "../ssh";
+import { forgetHostKey, installKeys, openShell, waitForCloudInit } from "../ssh";
 import { Key } from "./key";
 import { LaunchForm } from "./launch-form";
 
@@ -42,6 +43,7 @@ export interface AppProps {
   fleet: Fleet;
   launchPrefs: LaunchPrefs;
   sshKeyPath: string;
+  keys: AgentKeys;
 }
 
 const REFRESH_MS = 10_000;
@@ -59,7 +61,7 @@ function age(iso: string): string {
   return `${Math.floor(minutes / 1440)}d`;
 }
 
-export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
+export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppProps) {
   const { exit, suspendTerminal } = useApp();
   const [list, setList] = useState<FleetVm[] | null>(null);
   const [jobs, setJobs] = useState<Record<string, Job>>({});
@@ -149,6 +151,13 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath }: AppProps) 
       void refresh();
       await waitForCloudInit(vm.publicIp!);
       updateJob(name, { phase: "ready" });
+      try {
+        await installKeys(vm.publicIp!, keys);
+      } catch (err) {
+        // The VM works; only the tools' sign-in is missing. `pnpm cli keys` retries it.
+        setMessage({ text: `${name} is ready, but ${errorText(err)}. Retry: pnpm cli keys ${name}`, tone: "error" });
+        return;
+      }
       setMessage({ text: `${name} is ready. Select it and press enter to connect.`, tone: "success" });
     } catch (err) {
       updateJob(name, { phase: "failed" });
@@ -232,6 +241,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath }: AppProps) 
         <LaunchForm
           fleet={fleet}
           initial={launchPrefs}
+          keys={keys}
           onLaunch={launch}
           onCancel={() => setPicking(false)}
         />
