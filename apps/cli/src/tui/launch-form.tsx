@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { AGENT_TOOLS, ALL_TOOL_IDS, type Region, type Size, type ToolId, type VmProvider } from "@agent-platform/core";
-import type { LaunchPrefs } from "../prefs";
+import { AGENT_TOOLS, ALL_TOOL_IDS, type Fleet, type Region, type Size, type ToolId } from "@agent-platform/core";
+import { placementFor, type LaunchPrefs } from "../prefs";
 import { Key } from "./key";
 
 // Region and size lists change slowly; cache them so reopening the form is
@@ -19,26 +19,30 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   return value as Promise<T>;
 }
 
-type Step = "region" | "size" | "tools";
+type Step = "provider" | "region" | "size" | "tools";
 
 type Loadable<T> = { state: "loading" } | { state: "error"; error: string } | { state: "ready"; value: T };
 
 export interface LaunchFormProps {
-  provider: VmProvider;
+  fleet: Fleet;
   initial: LaunchPrefs;
   onLaunch: (choice: LaunchPrefs) => void;
   onCancel: () => void;
 }
 
-/** n → region → size → tools. Enter on every step launches with the last choices. */
-export function LaunchForm({ provider, initial, onLaunch, onCancel }: LaunchFormProps) {
-  const [step, setStep] = useState<Step>("region");
+/** n → provider → region → size → tools. Enter on every step launches with the last choices. */
+export function LaunchForm({ fleet, initial, onLaunch, onCancel }: LaunchFormProps) {
+  const [step, setStep] = useState<Step>("provider");
+  const [providerName, setProviderName] = useState(initial.provider);
   const [region, setRegion] = useState(initial.region);
   const [size, setSize] = useState(initial.size);
   const [regions, setRegions] = useState<Loadable<Region[]>>({ state: "loading" });
   const [sizes, setSizes] = useState<Loadable<Size[]>>({ state: "loading" });
+  const cloud = fleet.cloud(providerName);
+  const provider = cloud.vms.provider;
 
   useEffect(() => {
+    setRegions({ state: "loading" });
     cached(`${provider.name}:regions`, () => provider.listRegions()).then(
       (value) => setRegions({ state: "ready", value: [...value].sort((a, b) => a.slug.localeCompare(b.slug)) }),
       (err: Error) => setRegions({ state: "error", error: err.message }),
@@ -58,17 +62,40 @@ export function LaunchForm({ provider, initial, onLaunch, onCancel }: LaunchForm
   }, [provider, region]);
 
   const sizeInfo = sizes.state === "ready" ? sizes.value.find((s) => s.name === size) : undefined;
+  const after = (s: Step) => STEPS.indexOf(step) > STEPS.indexOf(s);
 
   return (
     <Box flexDirection="column">
       <Text bold>New agent VM</Text>
       <Box marginTop={1} flexDirection="column">
-        <StepLine label="Region" active={step === "region"} value={regionLabel(regions, region)} />
-        <StepLine label="Size" active={step === "size"} value={step === "region" ? "" : sizeLabel(size, sizeInfo)} />
+        <StepLine label="Cloud" active={step === "provider"} value={cloud.label} />
+        <StepLine
+          label="Region"
+          active={step === "region"}
+          value={after("provider") ? regionLabel(regions, region) : ""}
+        />
+        <StepLine label="Size" active={step === "size"} value={after("region") ? sizeLabel(size, sizeInfo) : ""} />
         <StepLine label="Tools" active={step === "tools"} value="" />
       </Box>
 
       <Box marginTop={1} flexDirection="column">
+        {step === "provider" && (
+          <ProviderStep
+            fleet={fleet}
+            current={providerName}
+            onPick={(name) => {
+              if (name !== providerName) {
+                // Regions and sizes are per provider; start from that one's last choices.
+                const placement = placementFor(fleet, name);
+                setProviderName(name);
+                setRegion(placement.region);
+                setSize(placement.size);
+              }
+              setStep("region");
+            }}
+            onBack={onCancel}
+          />
+        )}
         {step === "region" && (
           <RegionStep
             regions={regions}
@@ -78,7 +105,7 @@ export function LaunchForm({ provider, initial, onLaunch, onCancel }: LaunchForm
               setRegion(slug);
               setStep("size");
             }}
-            onBack={onCancel}
+            onBack={() => setStep("provider")}
           />
         )}
         {step === "size" && (
@@ -96,11 +123,79 @@ export function LaunchForm({ provider, initial, onLaunch, onCancel }: LaunchForm
         {step === "tools" && (
           <ToolStep
             initial={initial.tools}
-            summary={`${region} · ${sizeLabel(size, sizeInfo)}`}
-            onLaunch={(tools) => onLaunch({ region, size, tools })}
+            summary={`${cloud.label} ${region} · ${sizeLabel(size, sizeInfo)}`}
+            onLaunch={(tools) => onLaunch({ provider: providerName, region, size, tools })}
             onBack={() => setStep("size")}
           />
         )}
+      </Box>
+    </Box>
+  );
+}
+
+const STEPS: Step[] = ["provider", "region", "size", "tools"];
+
+interface ProviderStepProps {
+  fleet: Fleet;
+  current: string;
+  onPick: (name: string) => void;
+  onBack: () => void;
+}
+
+// Enabled providers first; the rest are listed with how to turn them on.
+function ProviderStep({ fleet, current, onPick, onBack }: ProviderStepProps) {
+  const options = [
+    ...fleet.clouds.map((c) => ({
+      name: c.name,
+      label: c.label,
+      hint: `${c.defaults.region} · ${c.defaults.size}`,
+      enabled: true,
+    })),
+    ...fleet.config.notEnabled.map((c) => ({ name: c.name, label: c.label, hint: c.setupHint, enabled: false })),
+  ];
+  const { cursor, top, move } = useCursor(
+    options.length,
+    options.findIndex((o) => o.name === current),
+  );
+  const [note, setNote] = useState<string | null>(null);
+
+  useInput((input, key) => {
+    if (key.escape) return onBack();
+    if (key.upArrow || input === "k") return (setNote(null), move(-1));
+    if (key.downArrow || input === "j") return (setNote(null), move(1));
+    const option = options[cursor];
+    if (key.return && option) {
+      if (option.enabled) return onPick(option.name);
+      setNote(`${option.label} isn't set up yet: ${option.hint}, then restart.`);
+    }
+  });
+
+  return (
+    <Box flexDirection="column">
+      <ListWindow
+        items={options}
+        cursor={cursor}
+        top={top}
+        render={(o, isCursor) => (
+          <>
+            <Box width={16}>
+              <Text bold={isCursor} dimColor={!o.enabled}>
+                {o.label}
+              </Text>
+            </Box>
+            <Text dimColor>{o.enabled ? o.hint : "not set up"}</Text>
+          </>
+        )}
+      />
+      {note ? (
+        <Box marginTop={1}>
+          <Text color="yellow">{note}</Text>
+        </Box>
+      ) : null}
+      <Box marginTop={1} gap={2}>
+        <Key k="↑↓" label="choose" />
+        <Key k="⏎" label="next" />
+        <Key k="esc" label="cancel" />
       </Box>
     </Box>
   );
@@ -120,7 +215,7 @@ function StepLine({ label, active, value }: { label: string; active: boolean; va
   return (
     <Box>
       <Text color="cyan">{active ? "❯ " : "  "}</Text>
-      <Box width={8}>
+      <Box width={9}>
         <Text bold={active} dimColor={!active}>
           {label}
         </Text>
@@ -130,7 +225,15 @@ function StepLine({ label, active, value }: { label: string; active: boolean; va
   );
 }
 
-function Loading<T>({ data, label, children }: { data: Loadable<T>; label: string; children: (value: T) => ReactNode }) {
+function Loading<T>({
+  data,
+  label,
+  children,
+}: {
+  data: Loadable<T>;
+  label: string;
+  children: (value: T) => ReactNode;
+}) {
   if (data.state === "loading") return <Spinner label={label} />;
   if (data.state === "error") return <Text color="red">✗ {data.error}</Text>;
   return <>{children(data.value)}</>;
@@ -160,14 +263,14 @@ function ListWindow<T>({
 }) {
   return (
     <Box flexDirection="column">
-      {top > 0 ? <Text dimColor>  ↑ {top} more</Text> : null}
+      {top > 0 ? <Text dimColor> ↑ {top} more</Text> : null}
       {items.slice(top, top + WINDOW).map((item, i) => (
         <Box key={top + i}>
           <Text color="cyan">{top + i === cursor ? "❯ " : "  "}</Text>
           {render(item, top + i === cursor)}
         </Box>
       ))}
-      {top + WINDOW < items.length ? <Text dimColor>  ↓ {items.length - top - WINDOW} more</Text> : null}
+      {top + WINDOW < items.length ? <Text dimColor> ↓ {items.length - top - WINDOW} more</Text> : null}
     </Box>
   );
 }
@@ -189,8 +292,12 @@ function RegionStep({ regions, ...props }: RegionStepProps) {
 }
 
 function RegionList({ list, region, size, onPick, onBack }: Omit<RegionStepProps, "regions"> & { list: Region[] }) {
-  const { cursor, top, move } = useCursor(list.length, list.findIndex((r) => r.slug === region));
+  const { cursor, top, move } = useCursor(
+    list.length,
+    list.findIndex((r) => r.slug === region),
+  );
   const offering = list.filter((r) => r.sizes?.includes(size)).length;
+  const slugWidth = Math.max(0, ...list.map((r) => r.slug.length)) + 2;
 
   useInput((input, key) => {
     if (key.escape) return onBack();
@@ -211,7 +318,7 @@ function RegionList({ list, region, size, onPick, onBack }: Omit<RegionStepProps
           const lacksSize = r.sizes !== undefined && !r.sizes.includes(size);
           return (
             <>
-              <Box width={8}>
+              <Box width={slugWidth}>
                 <Text bold={isCursor} dimColor={lacksSize}>
                   {r.slug}
                 </Text>
@@ -283,7 +390,11 @@ function SizeList({ list, region, size, onPick, onBack }: Omit<SizeStepProps, "s
 
   return (
     <Box flexDirection="column">
-      {index === -1 ? <Text color="yellow">{size} isn't available in {region} right now; pick another size.</Text> : null}
+      {index === -1 ? (
+        <Text color="yellow">
+          {size} isn't available in {region} right now; pick another size.
+        </Text>
+      ) : null}
       <Text dimColor>
         {"  "}
         {"SIZE".padEnd(22)}

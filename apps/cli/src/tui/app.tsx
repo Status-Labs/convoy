@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { useCallback, useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { newVmName, type AgentVms, type Vm } from "@agent-platform/core";
+import { newVmName, type Fleet, type FleetVm } from "@agent-platform/core";
 import { saveLaunchPrefs, type LaunchPrefs } from "../prefs";
 import { forgetHostKey, openShell, waitForCloudInit } from "../ssh";
 import { Key } from "./key";
@@ -14,6 +14,7 @@ type Phase = "creating" | "booting" | "installing" | "ready" | "failed";
 interface Job {
   name: string;
   phase: Phase;
+  provider: string;
   region: string;
   vmId?: string;
 }
@@ -22,7 +23,7 @@ interface Row {
   key: string;
   name: string;
   id?: string;
-  vm?: Vm;
+  vm?: FleetVm;
   job?: Job;
   deleting: boolean;
 }
@@ -30,7 +31,7 @@ interface Row {
 type Message = { text: string; tone: "info" | "success" | "error" } | null;
 
 export interface AppProps {
-  vms: AgentVms;
+  fleet: Fleet;
   launchPrefs: LaunchPrefs;
   sshKeyPath: string;
 }
@@ -48,9 +49,9 @@ function age(iso: string): string {
   return `${Math.floor(minutes / 1440)}d`;
 }
 
-export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
+export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
   const { exit, suspendTerminal } = useApp();
-  const [list, setList] = useState<Vm[] | null>(null);
+  const [list, setList] = useState<FleetVm[] | null>(null);
   const [jobs, setJobs] = useState<Record<string, Job>>({});
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState(0);
@@ -58,17 +59,26 @@ export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
   const [message, setMessage] = useState<Message>(null);
   const [picking, setPicking] = useState(false);
   const [launchPrefs, setLaunchPrefs] = useState(initialPrefs);
-  const summary = [vms.provider.name, launchPrefs.region, launchPrefs.size].join(" · ");
+  const summary = [
+    fleet.clouds.map((c) => c.label).join(" + "),
+    `next: ${fleet.cloud(launchPrefs.provider).label} ${launchPrefs.region} ${launchPrefs.size}`,
+  ].join(" · ");
+  const providerLabels = Object.fromEntries(fleet.clouds.map((c) => [c.name, c.label]));
 
   const refresh = useCallback(async () => {
     try {
-      const vmList = await vms.listVms();
-      setList(vmList.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+      const { vms, errors } = await fleet.listVms();
+      setList(vms.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+      // Other providers' VMs still show when one is down.
+      if (errors.length > 0) {
+        const text = errors.map((e) => `${providerLabels[e.provider]}: ${e.message}`).join("; ");
+        setMessage({ text: `Couldn't list some VMs. ${text}`, tone: "error" });
+      }
     } catch (err) {
       setList((current) => current ?? []);
       setMessage({ text: errorText(err), tone: "error" });
     }
-  }, [vms]);
+  }, [fleet]);
 
   useEffect(() => {
     void refresh();
@@ -100,7 +110,7 @@ export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
   async function launch(choice: LaunchPrefs) {
     setPicking(false);
     setLaunchPrefs(choice);
-    saveLaunchPrefs(vms.provider.name, choice);
+    saveLaunchPrefs(choice);
     let sshPublicKey: string;
     try {
       sshPublicKey = readFileSync(sshKeyPath, "utf8");
@@ -110,10 +120,11 @@ export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
     }
 
     const name = newVmName();
-    updateJob(name, { phase: "creating", region: choice.region });
+    updateJob(name, { phase: "creating", provider: choice.provider, region: choice.region });
     setSelected(0);
     setMessage(null);
     try {
+      const { vms } = fleet.cloud(choice.provider);
       const created = await vms.launch({ sshPublicKey, name, ...choice });
       updateJob(name, { phase: "booting", vmId: created.id });
       void refresh();
@@ -146,7 +157,7 @@ export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
     const id = row.id!;
     setDeleting((current) => new Set(current).add(id));
     try {
-      await vms.provider.deleteVm(id);
+      await fleet.cloud(row.vm?.provider ?? row.job!.provider).vms.provider.deleteVm(id);
       if (row.vm?.publicIp) forgetHostKey(row.vm.publicIp);
       setJobs(({ [row.name]: _, ...rest }) => rest);
       setMessage({ text: `Deleted ${row.name}.`, tone: "info" });
@@ -200,7 +211,7 @@ export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
       <Box flexDirection="column" paddingX={1} paddingY={1}>
         {header}
         <LaunchForm
-          provider={vms.provider}
+          fleet={fleet}
           initial={launchPrefs}
           onLaunch={launch}
           onCancel={() => setPicking(false)}
@@ -220,7 +231,7 @@ export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
           No agent VMs yet. Press <Text bold color="cyan">n</Text> to launch one.
         </Text>
       ) : (
-        <VmTable rows={rows} selected={current} />
+        <VmTable rows={rows} selected={current} providerLabels={providerLabels} />
       )}
 
       <Box marginTop={1}>
@@ -249,9 +260,15 @@ export function App({ vms, launchPrefs: initialPrefs, sshKeyPath }: AppProps) {
   );
 }
 
-const COLUMNS = { name: 18, status: 22, ip: 17, region: 8 };
+const COLUMNS = { name: 18, status: 22, ip: 17, cloud: 14, region: 11 };
 
-function VmTable({ rows, selected }: { rows: Row[]; selected: number }) {
+interface VmTableProps {
+  rows: Row[];
+  selected: number;
+  providerLabels: Record<string, string>;
+}
+
+function VmTable({ rows, selected, providerLabels }: VmTableProps) {
   return (
     <Box flexDirection="column">
       <Box>
@@ -260,6 +277,7 @@ function VmTable({ rows, selected }: { rows: Row[]; selected: number }) {
           {"NAME".padEnd(COLUMNS.name)}
           {"STATUS".padEnd(COLUMNS.status)}
           {"IP".padEnd(COLUMNS.ip)}
+          {"CLOUD".padEnd(COLUMNS.cloud)}
           {"REGION".padEnd(COLUMNS.region)}
           AGE
         </Text>
@@ -277,6 +295,9 @@ function VmTable({ rows, selected }: { rows: Row[]; selected: number }) {
             </Box>
             <Box width={COLUMNS.ip}>
               <Text dimColor={!row.vm?.publicIp}>{row.vm?.publicIp ?? "—"}</Text>
+            </Box>
+            <Box width={COLUMNS.cloud}>
+              <Text>{providerLabels[row.vm?.provider ?? row.job?.provider ?? ""]}</Text>
             </Box>
             <Box width={COLUMNS.region}>
               <Text>{row.vm?.region ?? row.job?.region ?? ""}</Text>
@@ -337,7 +358,7 @@ export function SetupNeeded({ error }: { error: string }) {
           {"  "}1. <Text bold>cp .env.example .env</Text>
         </Text>
         <Text>
-          {"  "}2. Set <Text bold>DIGITALOCEAN_TOKEN</Text> (or PROVIDER=ovh and the OVH_* values)
+          {"  "}2. Turn on at least one provider (see the list above)
         </Text>
         <Text>
           {"  "}3. Run <Text bold>pnpm cli</Text> again

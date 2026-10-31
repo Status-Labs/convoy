@@ -1,7 +1,41 @@
-import type { DigitalOceanConfig } from "../config";
-import { ProviderApiError, type CreateVmRequest, type Region, type Size, type Vm, type VmProvider, type VmStatus } from "../types";
+import {
+  ProviderApiError,
+  type CreateVmRequest,
+  type ProviderDefinition,
+  type Region,
+  type Size,
+  type Vm,
+  type VmProvider,
+  type VmStatus,
+} from "../types";
+import { requireEnv } from "./shared";
 
 const API = "https://api.digitalocean.com/v2";
+
+export interface DigitalOceanConfig {
+  token: string;
+  region: string;
+  size: string;
+  image: string;
+}
+
+export const digitalocean: ProviderDefinition = {
+  name: "digitalocean",
+  label: "DigitalOcean",
+  setupHint: "set DIGITALOCEAN_TOKEN in .env",
+  isEnabled: (env) => Boolean(env.DIGITALOCEAN_TOKEN),
+  fromEnv(env) {
+    requireEnv(env, "DigitalOcean", ["DIGITALOCEAN_TOKEN"]);
+    const config: DigitalOceanConfig = {
+      token: env.DIGITALOCEAN_TOKEN!,
+      region: env.DO_REGION || "nyc1",
+      size: env.DO_SIZE || "s-2vcpu-4gb",
+      image: env.DO_IMAGE || "ubuntu-24-04-x64",
+    };
+    const { region, size, image } = config;
+    return { provider: new DigitalOceanProvider(config), defaults: { region, size, image } };
+  },
+};
 
 // Droplets we manage carry this tag, which the API can filter on.
 const TAG = "agent-vm";

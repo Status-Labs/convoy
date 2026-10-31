@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { ALL_TOOL_IDS, AgentVms, configFromEnv, createProvider, parseToolIds } from "@agent-platform/core";
+import { ALL_TOOL_IDS, Fleet, PROVIDERS, configFromEnv, parseToolIds, type Cloud } from "@agent-platform/core";
 import { forgetHostKey, forwardPort, openShell, runRemote, sshCommand, waitForCloudInit } from "./ssh";
 import { runTui } from "./tui/run";
 
@@ -15,9 +15,15 @@ for (const path of [".env", repoRootEnv]) {
   }
 }
 
-let cached: AgentVms | undefined;
-function vms(): AgentVms {
-  return (cached ??= new AgentVms(createProvider(configFromEnv())));
+let cachedFleet: Fleet | undefined;
+function fleet(): Fleet {
+  return (cachedFleet ??= new Fleet(configFromEnv()));
+}
+
+// Set by --provider; otherwise PROVIDER from .env, else the first enabled one.
+let selectedProvider: string | undefined;
+function cloud(): Cloud {
+  return fleet().cloud(selectedProvider);
 }
 
 function expandHome(path: string): string {
@@ -40,7 +46,7 @@ function parsePort(value: string): number {
 }
 
 async function vmIp(idOrName: string): Promise<{ name: string; ip: string }> {
-  const vm = await vms().findVm(idOrName);
+  const { vm } = await fleet().findVm(idOrName);
   if (!vm.publicIp) throw new Error(`${vm.name} has no public IP yet (status ${vm.status})`);
   return { name: vm.name, ip: vm.publicIp };
 }
@@ -48,10 +54,12 @@ async function vmIp(idOrName: string): Promise<{ name: string; ip: string }> {
 const program = new Command()
   .name("agent-vm")
   .description("Launch isolated cloud VMs for running AI agent tools")
-  .option("-p, --provider <name>", "cloud provider: digitalocean or ovh (default: PROVIDER, else digitalocean)")
+  .option(
+    "-p, --provider <name>",
+    `cloud to launch on or list regions/sizes for: ${PROVIDERS.map((p) => p.name).join(", ")} (default: PROVIDER in .env)`,
+  )
   .hook("preAction", (cmd) => {
-    const { provider } = cmd.opts();
-    if (provider) process.env.PROVIDER = provider;
+    selectedProvider = cmd.opts().provider;
   })
   // No command: open the interactive TUI.
   .action(async () => {
@@ -76,7 +84,8 @@ program
       : opts.tools === "none" ? []
       : parseToolIds(opts.tools.split(",").map((id: string) => id.trim()).filter(Boolean));
 
-    const created = await vms().launch({
+    const target = cloud();
+    const created = await target.vms.launch({
       sshPublicKey,
       tools,
       name: opts.name,
@@ -84,11 +93,11 @@ program
       size: opts.size,
       image: opts.image,
     });
-    console.log(`Created ${created.name} (${created.id}) on ${vms().provider.name} in ${created.region}`);
+    console.log(`Created ${created.name} (${created.id}) on ${target.label} in ${created.region}`);
     if (!opts.wait) return;
 
     let lastStatus = "";
-    const vm = await vms().waitForRunning(created.id, {
+    const vm = await target.vms.waitForRunning(created.id, {
       onPoll: ({ providerStatus }) => {
         if (providerStatus !== lastStatus) console.log(`  status: ${providerStatus}`);
         lastStatus = providerStatus;
@@ -105,10 +114,19 @@ program
   .command("list")
   .description("List agent VMs")
   .action(async () => {
-    const list = await vms().listVms();
-    if (list.length === 0) return console.log("No agent VMs.");
+    const { vms, errors } = await fleet().listVms();
+    for (const { provider, message } of errors) console.error(`Couldn't list ${provider} VMs: ${message}`);
+    if (vms.length === 0) return console.log("No agent VMs.");
     console.table(
-      list.map(({ name, id, status, region, publicIp, createdAt }) => ({ name, id, status, region, publicIp, createdAt })),
+      vms.map(({ name, provider, id, status, region, publicIp, createdAt }) => ({
+        name,
+        provider,
+        id,
+        status,
+        region,
+        publicIp,
+        createdAt,
+      })),
     );
   });
 
@@ -116,7 +134,7 @@ program
   .command("ssh <vm>")
   .description("Open a shell on an agent VM (id or name)")
   .action(async (idOrName: string) => {
-    const vm = await vms().findVm(idOrName);
+    const { vm } = await fleet().findVm(idOrName);
     if (!vm.publicIp) throw new Error(`${vm.name} has no public IP yet (status ${vm.status})`);
     process.exitCode = await openShell(vm.publicIp);
   });
@@ -126,9 +144,9 @@ program
   .description("Delete an agent VM (id or name)")
   .option("-y, --yes", "skip confirmation")
   .action(async (idOrName: string, opts) => {
-    const vm = await vms().findVm(idOrName);
-    if (!opts.yes && !(await confirm(`Delete ${vm.name} (${vm.id})?`))) return;
-    await vms().provider.deleteVm(vm.id);
+    const { vm, cloud } = await fleet().findVm(idOrName);
+    if (!opts.yes && !(await confirm(`Delete ${vm.name} (${vm.id}) on ${cloud.label}?`))) return;
+    await cloud.vms.provider.deleteVm(vm.id);
     if (vm.publicIp) forgetHostKey(vm.publicIp);
     console.log(`Deleted ${vm.name}`);
   });
@@ -184,11 +202,23 @@ program
   });
 
 program
+  .command("providers")
+  .description("Show which cloud providers are set up")
+  .action(() => {
+    const { clouds, notEnabled, defaultProvider } = fleet().config;
+    for (const c of clouds) {
+      const { region, size } = c.defaults;
+      console.log(`✓ ${c.label.padEnd(14)} ${c.name === defaultProvider ? "default · " : ""}${region} · ${size}`);
+    }
+    for (const c of notEnabled) console.log(`  ${c.label.padEnd(14)} not set up: ${c.setupHint}`);
+  });
+
+program
   .command("regions")
   .description("List available regions")
   .option("--size <size>", "only regions where this size can be created right now")
   .action(async (opts) => {
-    const regions = await vms().provider.listRegions();
+    const regions = await cloud().vms.provider.listRegions();
     console.table(
       regions
         .filter((r) => !opts.size || r.sizes?.includes(opts.size))
@@ -201,7 +231,7 @@ program
   .description("List VM sizes in a region")
   .option("--region <region>", "region (default from .env)")
   .action(async (opts) => {
-    const sizes = await vms().provider.listSizes(opts.region);
+    const sizes = await cloud().vms.provider.listSizes(opts.region);
     console.table(
       sizes
         .sort((a, b) => a.vcpus - b.vcpus || a.ramGb - b.ramGb)
@@ -220,7 +250,7 @@ program
   .description("List Linux images in a region")
   .option("--region <region>", "region (default from .env)")
   .action(async (opts) => {
-    for (const name of (await vms().provider.listImages(opts.region)).sort()) console.log(name);
+    for (const name of (await cloud().vms.provider.listImages(opts.region)).sort()) console.log(name);
   });
 
 program.parseAsync().catch((err: Error) => {

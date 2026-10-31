@@ -1,8 +1,52 @@
 /// <reference path="./ovh-module.d.ts" />
 import ovh from "ovh";
-import type { OvhConfig } from "../config";
-import { ProviderApiError, type CreateVmRequest, type Region, type Size, type Vm, type VmProvider, type VmStatus } from "../types";
-import { VM_NAME_PREFIX } from "./shared";
+import {
+  ProviderApiError,
+  type CreateVmRequest,
+  type ProviderDefinition,
+  type Region,
+  type Size,
+  type Vm,
+  type VmProvider,
+  type VmStatus,
+} from "../types";
+import { requireEnv, VM_NAME_PREFIX } from "./shared";
+
+export interface OvhConfig {
+  endpoint: string;
+  appKey: string;
+  appSecret: string;
+  consumerKey: string;
+  projectId: string;
+  region: string;
+  flavor: string;
+  image: string;
+}
+
+const OVH_CREDENTIALS = ["OVH_APPLICATION_KEY", "OVH_APPLICATION_SECRET", "OVH_CONSUMER_KEY", "OVH_PROJECT_ID"];
+
+export const ovhcloud: ProviderDefinition = {
+  name: "ovh",
+  label: "OVHcloud",
+  setupHint: "set OVH_APPLICATION_KEY, OVH_APPLICATION_SECRET, OVH_CONSUMER_KEY, OVH_PROJECT_ID in .env",
+  // Any credential set means the user is turning it on; fromEnv reports the rest.
+  isEnabled: (env) => OVH_CREDENTIALS.some((name) => env[name]),
+  fromEnv(env) {
+    requireEnv(env, "OVHcloud", OVH_CREDENTIALS);
+    const config: OvhConfig = {
+      endpoint: env.OVH_ENDPOINT || "ovh-eu",
+      appKey: env.OVH_APPLICATION_KEY!,
+      appSecret: env.OVH_APPLICATION_SECRET!,
+      consumerKey: env.OVH_CONSUMER_KEY!,
+      projectId: env.OVH_PROJECT_ID!,
+      region: env.OVH_REGION || "GRA11",
+      flavor: env.OVH_FLAVOR || "b3-8",
+      image: env.OVH_IMAGE || "Ubuntu 24.04",
+    };
+    const { region, flavor, image } = config;
+    return { provider: new OvhProvider(config), defaults: { region, size: flavor, image } };
+  },
+};
 
 interface OvhInstance {
   id: string;

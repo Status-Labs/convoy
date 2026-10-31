@@ -65,8 +65,10 @@ Four pieces, nothing more:
 
 ### 4.2 VM provisioning
 - **Multiple providers** behind one `VmProvider` interface (create, get, list, delete, list sizes/images), so an outage or account problem at one provider doesn't block us, and self-hosters can pick theirs.
-  - Implemented: **DigitalOcean** (default; REST API with a token) and **OVHcloud** (OpenStack-based Public Cloud API).
-  - Candidates later: Hetzner Cloud (cheapest), Vultr, Scaleway, AWS.
+  - Implemented: **DigitalOcean** (default; REST API with a token), **AWS EC2** (AWS SDK; set up but not yet tried on a real account) and **OVHcloud** (OpenStack-based Public Cloud API).
+  - **Several at once:** every provider configured in `.env` is enabled. The TUI lists VMs from all of them and the user picks a cloud when launching. One provider failing doesn't hide the others.
+  - Each provider is one module exporting a `ProviderDefinition` (name, label, how to tell it's enabled, how to build it from env), registered in `providers/index.ts`.
+  - Candidates later: Hetzner Cloud (cheapest), Vultr, Scaleway.
   - The cloud-init setup script is shared; only the API calls differ per provider.
 - Create, check, stop and delete instances through the provider API.
 - **Fixed choices for v1:** one region, one flavor (size), one Ubuntu LTS image.

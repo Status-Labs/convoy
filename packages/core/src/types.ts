@@ -48,6 +48,31 @@ export interface VmProvider {
   listImages(region?: string): Promise<string[]>;
 }
 
+/** The region, size and image new VMs get unless the user picks others. */
+export interface ProviderDefaults {
+  region: string;
+  size: string;
+  image: string;
+}
+
+/**
+ * Everything the app needs to plug in one cloud provider. Adding a provider
+ * means writing a VmProvider and one of these, then listing it in
+ * providers/index.ts.
+ */
+export interface ProviderDefinition {
+  /** Stable id used in .env (PROVIDER=...), prefs and the CLI's --provider. */
+  name: string;
+  /** Display name, e.g. "DigitalOcean". */
+  label: string;
+  /** What to put in .env to turn this provider on. */
+  setupHint: string;
+  /** Whether the user has turned this provider on in the environment. */
+  isEnabled(env: NodeJS.ProcessEnv): boolean;
+  /** Builds the provider from the environment; throws if settings are missing. */
+  fromEnv(env: NodeJS.ProcessEnv): { provider: VmProvider; defaults: ProviderDefaults };
+}
+
 export class ProviderApiError extends Error {
   constructor(
     readonly provider: string,

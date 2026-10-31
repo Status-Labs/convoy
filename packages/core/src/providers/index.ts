@@ -1,16 +1,12 @@
-import type { Config } from "../config";
-import type { VmProvider } from "../types";
-import { DigitalOceanProvider } from "./digitalocean";
-import { OvhProvider } from "./ovh";
+import type { ProviderDefinition } from "../types";
+import { aws } from "./aws";
+import { digitalocean } from "./digitalocean";
+import { ovhcloud } from "./ovh";
 
-export { DigitalOceanProvider, OvhProvider };
+export { AwsProvider } from "./aws";
+export { DigitalOceanProvider } from "./digitalocean";
+export { OvhProvider } from "./ovh";
 export { VM_NAME_PREFIX } from "./shared";
 
-export function createProvider(config: Config): VmProvider {
-  switch (config.provider) {
-    case "digitalocean":
-      return new DigitalOceanProvider(config.digitalocean);
-    case "ovh":
-      return new OvhProvider(config.ovh);
-  }
-}
+/** Every supported cloud, in the order they're offered. Add new providers here. */
+export const PROVIDERS: ProviderDefinition[] = [digitalocean, aws, ovhcloud];

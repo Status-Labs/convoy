@@ -1,78 +1,53 @@
-export const PROVIDERS = ["digitalocean", "ovh"] as const;
-export type ProviderName = (typeof PROVIDERS)[number];
+import { PROVIDERS } from "./providers";
+import type { ProviderDefaults, VmProvider } from "./types";
 
-export interface OvhConfig {
-  endpoint: string;
-  appKey: string;
-  appSecret: string;
-  consumerKey: string;
-  projectId: string;
-  region: string;
-  flavor: string;
-  image: string;
+/** A provider the user has turned on in .env. */
+export interface CloudConfig {
+  name: string;
+  label: string;
+  defaults: ProviderDefaults;
+  provider: VmProvider;
 }
 
-export interface DigitalOceanConfig {
-  token: string;
-  region: string;
-  size: string;
-  image: string;
+/** A supported provider that isn't turned on, with how to turn it on. */
+export interface AvailableCloud {
+  name: string;
+  label: string;
+  setupHint: string;
 }
 
-export type Config =
-  | { provider: "ovh"; ovh: OvhConfig }
-  | { provider: "digitalocean"; digitalocean: DigitalOceanConfig };
-
-function requireEnv(env: NodeJS.ProcessEnv, names: string[]): void {
-  const missing = names.filter((name) => !env[name]);
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing environment variables: ${missing.join(", ")}. Copy .env.example to .env and fill it in.`,
-    );
-  }
+export interface Config {
+  /** Used when no provider is chosen explicitly (PROVIDER in .env, else the first enabled). */
+  defaultProvider: string;
+  clouds: CloudConfig[];
+  notEnabled: AvailableCloud[];
 }
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
-  const provider = env.PROVIDER || "digitalocean";
-  if (!PROVIDERS.includes(provider as ProviderName)) {
-    throw new Error(`Unknown PROVIDER "${provider}". Expected one of: ${PROVIDERS.join(", ")}`);
+  const enabled = PROVIDERS.filter((p) => p.isEnabled(env));
+  if (enabled.length === 0) {
+    const hints = PROVIDERS.map((p) => `  ${p.label}: ${p.setupHint}`).join("\n");
+    throw new Error(`No cloud provider is set up. Copy .env.example to .env and turn one on:\n${hints}`);
   }
 
-  if (provider === "ovh") {
-    requireEnv(env, ["OVH_APPLICATION_KEY", "OVH_APPLICATION_SECRET", "OVH_CONSUMER_KEY", "OVH_PROJECT_ID"]);
-    return {
-      provider,
-      ovh: {
-        endpoint: env.OVH_ENDPOINT || "ovh-eu",
-        appKey: env.OVH_APPLICATION_KEY!,
-        appSecret: env.OVH_APPLICATION_SECRET!,
-        consumerKey: env.OVH_CONSUMER_KEY!,
-        projectId: env.OVH_PROJECT_ID!,
-        region: env.OVH_REGION || "GRA11",
-        flavor: env.OVH_FLAVOR || "b3-8",
-        image: env.OVH_IMAGE || "Ubuntu 24.04",
-      },
-    };
+  const clouds = enabled.map((p) => ({ name: p.name, label: p.label, ...p.fromEnv(env) }));
+  const defaultProvider = env.PROVIDER || clouds[0]!.name;
+  if (!clouds.some((c) => c.name === defaultProvider)) {
+    const known = PROVIDERS.find((p) => p.name === defaultProvider);
+    throw new Error(
+      known
+        ? `PROVIDER=${defaultProvider}, but ${known.label} isn't set up: ${known.setupHint}.`
+        : `Unknown PROVIDER "${defaultProvider}". Expected one of: ${PROVIDERS.map((p) => p.name).join(", ")}.`,
+    );
   }
 
-  requireEnv(env, ["DIGITALOCEAN_TOKEN"]);
   return {
-    provider: "digitalocean",
-    digitalocean: {
-      token: env.DIGITALOCEAN_TOKEN!,
-      region: env.DO_REGION || "nyc1",
-      size: env.DO_SIZE || "s-2vcpu-4gb",
-      image: env.DO_IMAGE || "ubuntu-24-04-x64",
-    },
+    defaultProvider,
+    clouds,
+    notEnabled: PROVIDERS.filter((p) => !p.isEnabled(env)).map(({ name, label, setupHint }) => ({
+      name,
+      label,
+      setupHint,
+    })),
   };
-}
-
-/** The region, size and image new VMs get unless overridden. */
-export function providerDefaults(config: Config): { region: string; size: string; image: string } {
-  if (config.provider === "ovh") {
-    const { region, flavor, image } = config.ovh;
-    return { region, size: flavor, image };
-  }
-  const { region, size, image } = config.digitalocean;
-  return { region, size, image };
 }

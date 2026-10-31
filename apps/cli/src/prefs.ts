@@ -1,18 +1,20 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { ALL_TOOL_IDS, type ToolId } from "@agent-platform/core";
+import { ALL_TOOL_IDS, type Fleet, type ToolId } from "@agent-platform/core";
 
 // The user's last launch choices. .env values are only the first-run defaults.
 const PREFS_PATH = join(homedir(), ".config", "agent-vm", "prefs.json");
 
 export interface LaunchPrefs {
+  provider: string;
   region: string;
   size: string;
   tools: ToolId[];
 }
 
 interface PrefsFile {
+  provider?: string;
   tools?: string[];
   // Region and size slugs are provider-specific.
   providers?: Record<string, { region?: string; size?: string }>;
@@ -26,20 +28,28 @@ function readPrefs(): PrefsFile {
   }
 }
 
-export function loadLaunchPrefs(provider: string, defaults: { region: string; size: string }): LaunchPrefs {
-  const prefs = readPrefs();
-  const saved = prefs.providers?.[provider] ?? {};
-  // Drop tools that no longer exist in the catalog.
-  const tools = prefs.tools?.filter((id): id is ToolId => ALL_TOOL_IDS.includes(id as ToolId));
-  return {
-    region: saved.region ?? defaults.region,
-    size: saved.size ?? defaults.size,
-    tools: tools ?? ALL_TOOL_IDS,
-  };
+/** Last region and size used on this provider, else its .env defaults. */
+export function placementFor(fleet: Fleet, provider: string): { region: string; size: string } {
+  const saved = readPrefs().providers?.[provider] ?? {};
+  const { defaults } = fleet.cloud(provider);
+  return { region: saved.region ?? defaults.region, size: saved.size ?? defaults.size };
 }
 
-export function saveLaunchPrefs(provider: string, { region, size, tools }: LaunchPrefs): void {
+export function loadLaunchPrefs(fleet: Fleet): LaunchPrefs {
   const prefs = readPrefs();
+  // The last-used provider may have been turned off in .env since.
+  const provider =
+    prefs.provider && fleet.clouds.some((c) => c.name === prefs.provider)
+      ? prefs.provider
+      : fleet.config.defaultProvider;
+  // Drop tools that no longer exist in the catalog.
+  const tools = prefs.tools?.filter((id): id is ToolId => ALL_TOOL_IDS.includes(id as ToolId));
+  return { provider, ...placementFor(fleet, provider), tools: tools ?? ALL_TOOL_IDS };
+}
+
+export function saveLaunchPrefs({ provider, region, size, tools }: LaunchPrefs): void {
+  const prefs = readPrefs();
+  prefs.provider = provider;
   prefs.tools = tools;
   prefs.providers = { ...prefs.providers, [provider]: { region, size } };
   try {

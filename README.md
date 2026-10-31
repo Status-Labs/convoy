@@ -1,34 +1,35 @@
 # Agent Platform
 
 Launch isolated cloud VMs, preloaded with AI agent tools (Claude Code, Codex CLI), with one command.
-Supports DigitalOcean and OVHcloud Public Cloud. See [PLAN.md](PLAN.md) for where this is going.
+Supports DigitalOcean, AWS EC2 (untested against a real account yet) and OVHcloud Public Cloud, side by side. See [PLAN.md](PLAN.md) for where this is going.
 
 > Early prototype (Stage 1: CLI). Not ready for use yet.
 
 ## Quick start (CLI)
 
-Requires Node.js 22+, pnpm, and a DigitalOcean API token or an OVHcloud Public Cloud project.
+Requires Node.js 22+, pnpm, and an account with at least one provider: a DigitalOcean API token, AWS credentials, or an OVHcloud Public Cloud project.
 
 ```sh
 pnpm install
-cp .env.example .env   # pick PROVIDER and fill in its credentials
+cp .env.example .env   # fill in credentials for one or more providers
 
 pnpm cli               # open the interactive TUI
 ```
 
-In the TUI: `n` launches a VM (pick region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `d` deletes, `q` quits.
+In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `d` deletes, `q` quits.
 
 The same actions are available as commands for scripting:
 
 ```sh
+pnpm cli providers     # which clouds are set up
 pnpm cli regions       # check credentials, pick a region
 pnpm cli sizes         # VM sizes and prices in the default region
 pnpm cli create        # launch a VM and wait for tools to install
-pnpm cli list
+pnpm cli list          # VMs on every enabled cloud
 pnpm cli ssh <name>
 pnpm cli delete <name>
 
-pnpm cli --provider ovh list   # use another provider for one command
+pnpm cli --provider aws create   # launch on a non-default cloud
 ```
 
 ## What every VM gets
@@ -66,7 +67,7 @@ On the VM itself the same thing is `sudo agent-vm-firewall status|expose|unexpos
 
 ## Layout
 
-- `packages/core`: provider-independent VM logic, the tool catalog (`src/tools.ts`), the VM setup scripts (`src/vm-setup/`), one module per cloud provider (`src/providers/`), and the VM setup script (cloud-init), shared by the CLI and the future web app
+- `packages/core`: provider-independent VM logic, the tool catalog (`src/tools.ts`), the VM setup scripts (`src/vm-setup/`), one module per cloud provider (`src/providers/`; add a provider by writing a `ProviderDefinition` and listing it in `providers/index.ts`), and the VM setup script (cloud-init), shared by the CLI and the future web app
 - `apps/cli`: the `agent-vm` TUI and CLI (Ink + commander)
 
 ## License
