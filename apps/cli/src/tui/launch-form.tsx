@@ -8,6 +8,7 @@ import {
   type AgentKeys,
   type Fleet,
   type Region,
+  type SignInMode,
   type Size,
   type ToolId,
 } from "@agent-platform/core";
@@ -28,7 +29,7 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   return value as Promise<T>;
 }
 
-type Step = "provider" | "region" | "size" | "tools";
+type Step = "provider" | "region" | "size" | "signin" | "tools";
 
 type Loadable<T> = { state: "loading" } | { state: "error"; error: string } | { state: "ready"; value: T };
 
@@ -36,16 +37,17 @@ export interface LaunchFormProps {
   fleet: Fleet;
   initial: LaunchPrefs;
   keys: AgentKeys;
-  onLaunch: (choice: LaunchPrefs) => void;
+  onLaunch: (choice: LaunchPrefs, count: number) => void;
   onCancel: () => void;
 }
 
-/** n → provider → region → size → tools. Enter on every step launches with the last choices. */
+/** n → provider → region → size → sign-in → tools. Enter on every step launches with the last choices. */
 export function LaunchForm({ fleet, initial, keys, onLaunch, onCancel }: LaunchFormProps) {
   const [step, setStep] = useState<Step>("provider");
   const [providerName, setProviderName] = useState(initial.provider);
   const [region, setRegion] = useState(initial.region);
   const [size, setSize] = useState(initial.size);
+  const [signIn, setSignIn] = useState(initial.signIn);
   const [regions, setRegions] = useState<Loadable<Region[]>>({ state: "loading" });
   const [sizes, setSizes] = useState<Loadable<Size[]>>({ state: "loading" });
   const cloud = fleet.cloud(providerName);
@@ -85,6 +87,11 @@ export function LaunchForm({ fleet, initial, keys, onLaunch, onCancel }: LaunchF
           value={after("provider") ? regionLabel(regions, region) : ""}
         />
         <StepLine label="Size" active={step === "size"} value={after("region") ? sizeLabel(size, sizeInfo) : ""} />
+        <StepLine
+          label="Sign-in"
+          active={step === "signin"}
+          value={after("size") ? SIGN_IN_OPTIONS.find((o) => o.mode === signIn)!.label : ""}
+        />
         <StepLine label="Tools" active={step === "tools"} value="" />
       </Box>
 
@@ -125,18 +132,30 @@ export function LaunchForm({ fleet, initial, keys, onLaunch, onCancel }: LaunchF
             size={size}
             onPick={(name) => {
               setSize(name);
-              setStep("tools");
+              setStep("signin");
             }}
             onBack={() => setStep("region")}
+          />
+        )}
+        {step === "signin" && (
+          <SignInStep
+            current={signIn}
+            keys={keys}
+            onPick={(mode) => {
+              setSignIn(mode);
+              setStep("tools");
+            }}
+            onBack={() => setStep("size")}
           />
         )}
         {step === "tools" && (
           <ToolStep
             initial={initial.tools}
             keys={keys}
+            mode={signIn}
             summary={`${cloud.label} ${region} · ${sizeLabel(size, sizeInfo)}`}
-            onLaunch={(tools) => onLaunch({ provider: providerName, region, size, tools })}
-            onBack={() => setStep("size")}
+            onLaunch={(tools, count) => onLaunch({ provider: providerName, region, size, tools, signIn }, count)}
+            onBack={() => setStep("signin")}
           />
         )}
       </Box>
@@ -144,7 +163,7 @@ export function LaunchForm({ fleet, initial, keys, onLaunch, onCancel }: LaunchF
   );
 }
 
-const STEPS: Step[] = ["provider", "region", "size", "tools"];
+const STEPS: Step[] = ["provider", "region", "size", "signin", "tools"];
 
 interface ProviderStepProps {
   fleet: Fleet;
@@ -438,18 +457,80 @@ function SizeList({ list, region, size, onPick, onBack }: Omit<SizeStepProps, "s
   );
 }
 
-interface ToolStepProps {
-  initial: ToolId[];
+const SIGN_IN_OPTIONS: { mode: SignInMode; label: string; detail: string }[] = [
+  {
+    mode: "subscription",
+    label: "Sign in yourself",
+    detail: "Use your Claude or ChatGPT plan. Press l on the VM once it's ready.",
+  },
+  {
+    mode: "api-keys",
+    label: "API keys from .env",
+    detail: "Tools are signed in on boot. Best for swarms of VMs.",
+  },
+];
+
+interface SignInStepProps {
+  current: SignInMode;
   keys: AgentKeys;
-  summary: string;
-  onLaunch: (tools: ToolId[]) => void;
+  onPick: (mode: SignInMode) => void;
   onBack: () => void;
 }
 
-function ToolStep({ initial, keys, summary, onLaunch, onBack }: ToolStepProps) {
+function SignInStep({ current, keys, onPick, onBack }: SignInStepProps) {
+  const [cursor, setCursor] = useState(Math.max(0, SIGN_IN_OPTIONS.findIndex((o) => o.mode === current)));
+
+  useInput((input, key) => {
+    if (key.escape) return onBack();
+    if (key.upArrow || input === "k") return setCursor((c) => Math.max(0, c - 1));
+    if (key.downArrow || input === "j") return setCursor((c) => Math.min(SIGN_IN_OPTIONS.length - 1, c + 1));
+    if (key.return) onPick(SIGN_IN_OPTIONS[cursor]!.mode);
+  });
+
+  return (
+    <Box flexDirection="column">
+      {SIGN_IN_OPTIONS.map((option, index) => {
+        const isCursor = index === cursor;
+        return (
+          <Box key={option.mode}>
+            <Text color="cyan">{isCursor ? "❯ " : "  "}</Text>
+            <Box width={20}>
+              <Text bold={isCursor}>{option.label}</Text>
+            </Box>
+            <Text dimColor>{option.detail}</Text>
+          </Box>
+        );
+      })}
+      <Box marginTop={1}>
+        <Text dimColor>
+          .env keys: ANTHROPIC_API_KEY {keys.anthropic ? "✓" : "✗"} · OPENAI_API_KEY {keys.openai ? "✓" : "✗"}
+        </Text>
+      </Box>
+      <Box marginTop={1} gap={2}>
+        <Key k="⏎" label="choose" />
+        <Key k="esc" label="back" />
+      </Box>
+    </Box>
+  );
+}
+
+// Launching many VMs at once is a swarm; keep it under typical account limits.
+const MAX_COUNT = 10;
+
+interface ToolStepProps {
+  initial: ToolId[];
+  keys: AgentKeys;
+  mode: SignInMode;
+  summary: string;
+  onLaunch: (tools: ToolId[], count: number) => void;
+  onBack: () => void;
+}
+
+function ToolStep({ initial, keys, mode, summary, onLaunch, onBack }: ToolStepProps) {
   // Tools missing a required API key can't be picked.
-  const available = AGENT_TOOLS.filter((tool) => !missingKey(tool.id, keys)).map((tool) => tool.id);
+  const available = AGENT_TOOLS.filter((tool) => !missingKey(tool.id, keys, mode)).map((tool) => tool.id);
   const [cursor, setCursor] = useState(0);
+  const [count, setCount] = useState(1);
   const [chosen, setChosen] = useState<Set<ToolId>>(new Set(initial.filter((id) => available.includes(id))));
 
   useInput((input, key) => {
@@ -468,7 +549,9 @@ function ToolStep({ initial, keys, summary, onLaunch, onBack }: ToolStepProps) {
     if (input === "a") {
       return setChosen((current) => new Set(current.size === available.length ? [] : available));
     }
-    if (key.return) onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id));
+    if (input === "+" || input === "=" || key.rightArrow) return setCount((c) => Math.min(MAX_COUNT, c + 1));
+    if (input === "-" || key.leftArrow) return setCount((c) => Math.max(1, c - 1));
+    if (key.return) onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id), count);
   });
 
   return (
@@ -476,7 +559,7 @@ function ToolStep({ initial, keys, summary, onLaunch, onBack }: ToolStepProps) {
       {AGENT_TOOLS.map((tool, index) => {
         const isCursor = index === cursor;
         const isChosen = chosen.has(tool.id);
-        const status = keyStatus(tool.id, keys);
+        const status = keyStatus(tool.id, keys, mode);
         return (
           <Box key={tool.id}>
             <Text color="cyan">{isCursor ? "❯ " : "  "}</Text>
@@ -505,14 +588,20 @@ function ToolStep({ initial, keys, summary, onLaunch, onBack }: ToolStepProps) {
 
       <Box marginTop={1}>
         <Text>
-          Launch <Text bold>{summary}</Text>
+          Launch <Text bold>{count === 1 ? "1 VM" : `${count} VMs`}</Text> on <Text bold>{summary}</Text>
           {chosen.size === 0 ? " with no tools" : ` with ${chosen.size} tool${chosen.size === 1 ? "" : "s"}`}
         </Text>
       </Box>
+      {count > 1 && mode === "subscription" && (
+        <Text color="yellow">
+          Each VM needs its own sign-in, and plan limits assume ordinary individual use. For swarms, use API keys.
+        </Text>
+      )}
 
       <Box marginTop={1} gap={2}>
         <Key k="space" label="toggle" />
         <Key k="a" label="all/none" />
+        <Key k="←/→" label="how many VMs" />
         <Key k="⏎" label="launch" />
         <Key k="esc" label="back" />
       </Box>

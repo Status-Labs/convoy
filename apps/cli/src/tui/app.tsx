@@ -8,12 +8,13 @@ import {
   hourlyRate,
   monthToDateCost,
   newVmName,
+  SIGN_IN_SCRIPT,
   type AgentKeys,
   type Fleet,
   type FleetVm,
 } from "@agent-platform/core";
 import { saveLaunchPrefs, type LaunchPrefs } from "../prefs";
-import { forgetHostKey, installKeys, openShell, waitForCloudInit } from "../ssh";
+import { forgetHostKey, installKeys, openShell, runInteractive, waitForCloudInit } from "../ssh";
 import { Key } from "./key";
 import { LaunchForm } from "./launch-form";
 
@@ -125,10 +126,16 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
   ];
   const current = Math.min(selected, rows.length - 1);
 
-  async function launch(choice: LaunchPrefs) {
+  async function launch(choice: LaunchPrefs, count: number) {
     setPicking(false);
     setLaunchPrefs(choice);
     saveLaunchPrefs(choice);
+    setSelected(0);
+    setMessage(null);
+    for (let i = 0; i < count; i++) void launchOne(choice);
+  }
+
+  async function launchOne(choice: LaunchPrefs) {
     let sshPublicKey: string;
     try {
       sshPublicKey = readFileSync(sshKeyPath, "utf8");
@@ -139,8 +146,6 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
 
     const name = newVmName();
     updateJob(name, { phase: "creating", provider: choice.provider, region: choice.region });
-    setSelected(0);
-    setMessage(null);
     try {
       const { vms } = fleet.cloud(choice.provider);
       const created = await vms.launch({ sshPublicKey, name, ...choice });
@@ -151,6 +156,10 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
       void refresh();
       await waitForCloudInit(vm.publicIp!);
       updateJob(name, { phase: "ready" });
+      if (choice.signIn === "subscription") {
+        setMessage({ text: `${name} is ready. Select it and press l to sign in the agent tools.`, tone: "success" });
+        return;
+      }
       try {
         await installKeys(vm.publicIp!, keys);
       } catch (err) {
@@ -176,6 +185,18 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
       await openShell(ip);
     });
     void refresh();
+  }
+
+  async function signIn(row: Row) {
+    const ip = row.vm?.publicIp;
+    if (!ip) {
+      setMessage({ text: `${row.name} has no IP address yet.`, tone: "info" });
+      return;
+    }
+    await suspendTerminal(async () => {
+      process.stdout.write(`Signing in agent tools on ${row.name} (${ip}).\n`);
+      await runInteractive(ip, SIGN_IN_SCRIPT);
+    });
   }
 
   async function remove(row: Row) {
@@ -216,6 +237,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
     const row = rows[current];
     if (!row) return;
     if (key.return) return void connect(row);
+    if (input === "l") return void signIn(row);
     if (input === "d") {
       if (!row.id) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
       if (!row.deleting) setConfirmDelete(row);
@@ -281,6 +303,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
       <Box marginTop={1} gap={2}>
         <Key k="n" label="new" />
         <Key k="⏎" label="connect" />
+        <Key k="l" label="sign in" />
         <Key k="d" label="delete" />
         <Key k="r" label="refresh" />
         <Key k="q" label="quit" />

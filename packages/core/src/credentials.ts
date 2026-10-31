@@ -8,6 +8,14 @@ import { AGENT_TOOLS, type ToolId } from "./tools";
 // (~/.codex/auth.json) not be shared across machines, so a ChatGPT-plan login
 // is done per VM with `codex login --device-auth`.
 
+/**
+ * How agent tools on a new VM sign in:
+ * - subscription: you sign in yourself on each VM with your own Claude or
+ *   ChatGPT plan, through the vendor's login flow (`l` in the TUI).
+ * - api-keys: the API keys in .env are installed on boot. For swarms.
+ */
+export type SignInMode = "subscription" | "api-keys";
+
 export interface AgentKeys {
   anthropic?: string;
   openai?: string;
@@ -21,23 +29,26 @@ export function agentKeysFromEnv(env: NodeJS.ProcessEnv = process.env): AgentKey
 }
 
 /** Why a tool can't be launched with these keys, or null if it can. */
-export function missingKey(tool: ToolId, keys: AgentKeys): string | null {
-  if (tool === "claude-code" && !keys.anthropic) return "needs ANTHROPIC_API_KEY in .env";
+export function missingKey(tool: ToolId, keys: AgentKeys, mode: SignInMode): string | null {
+  if (mode === "api-keys" && tool === "claude-code" && !keys.anthropic) return "needs ANTHROPIC_API_KEY in .env";
   return null;
 }
 
-export function assertKeysFor(tools: ToolId[], keys: AgentKeys): void {
-  const missing = tools.filter((tool) => missingKey(tool, keys));
+export function assertKeysFor(tools: ToolId[], keys: AgentKeys, mode: SignInMode): void {
+  const missing = tools.filter((tool) => missingKey(tool, keys, mode));
   if (missing.length === 0) return;
   const names = missing.map((id) => AGENT_TOOLS.find((tool) => tool.id === id)!.name).join(", ");
   throw new Error(
-    `${names} needs ANTHROPIC_API_KEY in .env (see .env.example), or launch without it. ` +
-      "Claude subscription logins aren't copied to VMs, to stay within Anthropic's terms.",
+    `${names} needs ANTHROPIC_API_KEY in .env (see .env.example) when launching with API keys. ` +
+      "To use your Claude subscription instead, launch with subscription sign-in and sign in on the VM.",
   );
 }
 
 /** How a tool will authenticate on a new VM, for display. */
-export function keyStatus(tool: ToolId, keys: AgentKeys): { text: string; ok: boolean } | null {
+export function keyStatus(tool: ToolId, keys: AgentKeys, mode: SignInMode): { text: string; ok: boolean } | null {
+  if (mode === "subscription") {
+    return tool === "agent-browser" ? null : { text: "sign in on the VM", ok: true };
+  }
   switch (tool) {
     case "claude-code":
       return keys.anthropic ? { text: "uses your API key", ok: true } : { text: "needs ANTHROPIC_API_KEY in .env", ok: false };
@@ -88,3 +99,33 @@ export function keySetupScript(keys: AgentKeys): string | null {
   }
   return lines.join("\n") + "\n";
 }
+
+/**
+ * Interactive script that signs in Claude Code and Codex on a VM through each
+ * vendor's own login flow, skipping tools that are already signed in. Run it
+ * in a terminal over `ssh -t`. Holds no secrets.
+ */
+export const SIGN_IN_SCRIPT = `
+export PATH="$HOME/.local/bin:$PATH"
+if command -v claude >/dev/null; then
+  if claude auth status >/dev/null 2>&1; then
+    echo "Claude Code: already signed in."
+  else
+    echo; echo "== Claude Code: sign in with your Claude account =="
+    claude auth login || echo "Claude Code sign-in didn't finish. Retry on the VM with: claude auth login"
+  fi
+fi
+if command -v codex >/dev/null; then
+  if codex login status >/dev/null 2>&1; then
+    echo "Codex: already signed in."
+  else
+    echo; echo "== Codex: sign in with ChatGPT =="
+    echo "(Device code sign-in must be turned on in your ChatGPT security settings.)"
+    codex login --device-auth || echo "Codex sign-in didn't finish. Retry on the VM with: codex login --device-auth"
+  fi
+fi
+if command -v opencode >/dev/null; then
+  echo; echo "OpenCode: add a provider on the VM with: opencode auth login"
+fi
+echo; read -rp "Press enter to go back. " _
+`;

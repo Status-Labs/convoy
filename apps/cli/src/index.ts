@@ -7,6 +7,7 @@ import {
   ALL_TOOL_IDS,
   Fleet,
   PROVIDERS,
+  SIGN_IN_SCRIPT,
   agentKeysFromEnv,
   assertKeysFor,
   configFromEnv,
@@ -17,8 +18,18 @@ import {
   monthToDateCost,
   parseToolIds,
   type Cloud,
+  type SignInMode,
 } from "@agent-platform/core";
-import { forgetHostKey, forwardPort, installKeys, openShell, runRemote, sshCommand, waitForCloudInit } from "./ssh";
+import {
+  forgetHostKey,
+  forwardPort,
+  installKeys,
+  openShell,
+  runInteractive,
+  runRemote,
+  sshCommand,
+  waitForCloudInit,
+} from "./ssh";
 import { runTui } from "./tui/run";
 
 const repoRootEnv = fileURLToPath(new URL("../../../.env", import.meta.url));
@@ -89,16 +100,18 @@ program
   .option("--size <size>", "size / flavor name (default from .env)")
   .option("--image <image>", "image name (default from .env)")
   .option("--ssh-key <path>", "public key to install", defaultSshKey)
-  .option("--tools <ids>", `comma-separated tools to install, or "none" (default: all except Claude Code without ANTHROPIC_API_KEY: ${ALL_TOOL_IDS.join(",")})`)
+  .option("--tools <ids>", `comma-separated tools to install, or "none" (default: all: ${ALL_TOOL_IDS.join(",")})`)
+  .option("--api-keys", "set up tools with the API keys in .env (default: sign in yourself with `login`)")
   .option("--no-wait", "return as soon as the VM is created")
   .action(async (opts) => {
     const sshPublicKey = readFileSync(expandHome(opts.sshKey), "utf8");
     const keys = agentKeysFromEnv();
+    const mode: SignInMode = opts.apiKeys ? "api-keys" : "subscription";
     const tools =
-      opts.tools === undefined ? ALL_TOOL_IDS.filter((id) => !missingKey(id, keys))
+      opts.tools === undefined ? ALL_TOOL_IDS.filter((id) => !missingKey(id, keys, mode))
       : opts.tools === "none" ? []
       : parseToolIds(opts.tools.split(",").map((id: string) => id.trim()).filter(Boolean));
-    assertKeysFor(tools, keys);
+    assertKeysFor(tools, keys, mode);
 
     const target = cloud();
     const created = await target.vms.launch({
@@ -123,8 +136,11 @@ program
 
     console.log("  installing tools (cloud-init)...");
     await waitForCloudInit(vm.publicIp!);
-    if (await installKeys(vm.publicIp!, keys)) console.log("  agent tools set up with your API keys");
+    if (mode === "api-keys" && (await installKeys(vm.publicIp!, keys))) {
+      console.log("  agent tools set up with your API keys");
+    }
     console.log(`Ready. Connect with:\n  pnpm cli ssh ${vm.name}\n  ${sshCommand(vm.publicIp!)}`);
+    if (mode === "subscription") console.log(`Sign in agent tools with:\n  pnpm cli login ${vm.name}`);
   });
 
 program
@@ -160,6 +176,14 @@ program
     const { vm } = await fleet().findVm(idOrName);
     if (!vm.publicIp) throw new Error(`${vm.name} has no public IP yet (status ${vm.status})`);
     process.exitCode = await openShell(vm.publicIp);
+  });
+
+program
+  .command("login <vm>")
+  .description("Sign in Claude Code and Codex on the VM with your own accounts")
+  .action(async (idOrName: string) => {
+    const { ip } = await vmIp(idOrName);
+    process.exitCode = await runInteractive(ip, SIGN_IN_SCRIPT);
   });
 
 program

@@ -61,6 +61,13 @@ export async function installKeys(ip: string, keys: AgentKeys): Promise<boolean>
   return true;
 }
 
+// Runs a script on the VM in an interactive terminal. The script travels
+// base64-encoded in the command line, so it must not contain secrets.
+export function runInteractive(ip: string, script: string): Promise<number> {
+  const encoded = Buffer.from(script).toString("base64");
+  return run([...sshArgs(ip, ["-t"]), `bash -c "$(echo ${encoded} | base64 -d)"`], "inherit");
+}
+
 // Tunnels localhost:<localPort> to <remotePort> on the VM until interrupted.
 // Nothing is opened on the VM's firewall.
 export function forwardPort(ip: string, localPort: number, remotePort: number): Promise<number> {
