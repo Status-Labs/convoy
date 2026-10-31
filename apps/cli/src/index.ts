@@ -9,6 +9,7 @@ import {
   PROVIDERS,
   SIGN_IN_SCRIPT,
   agentKeysFromEnv,
+  assertProjectName,
   assertKeysFor,
   configFromEnv,
   missingKey,
@@ -47,6 +48,8 @@ function fleet(): Fleet {
 
 // Set by --provider; otherwise PROVIDER from .env, else the first enabled one.
 let selectedProvider: string | undefined;
+// Set by --project: `create` launches into it and `list` shows only it.
+let selectedProject: string | undefined;
 function cloud(): Cloud {
   return fleet().cloud(selectedProvider);
 }
@@ -83,8 +86,11 @@ const program = new Command()
     "-p, --provider <name>",
     `cloud to launch on or list regions/sizes for: ${PROVIDERS.map((p) => p.name).join(", ")} (default: PROVIDER in .env)`,
   )
+  .option("--project <name>", "project to launch into, or to list")
   .hook("preAction", (cmd) => {
     selectedProvider = cmd.opts().provider;
+    const project = cmd.opts().project;
+    selectedProject = project === undefined ? undefined : assertProjectName(project);
   })
   // No command: open the interactive TUI.
   .action(async () => {
@@ -117,12 +123,14 @@ program
     const created = await target.vms.launch({
       sshPublicKey,
       tools,
+      project: selectedProject,
       name: opts.name,
       region: opts.region,
       size: opts.size,
       image: opts.image,
     });
-    console.log(`Created ${created.name} (${created.id}) on ${target.label} in ${created.region}`);
+    const where = selectedProject ? ` (project ${selectedProject})` : "";
+    console.log(`Created ${created.name} (${created.id}) on ${target.label} in ${created.region}${where}`);
     if (!opts.wait) return;
 
     let lastStatus = "";
@@ -147,15 +155,17 @@ program
   .command("list")
   .description("List agent VMs")
   .action(async () => {
-    const { vms, errors } = await fleet().listVms();
+    const { vms: all, errors } = await fleet().listVms();
     for (const { provider, message } of errors) console.error(`Couldn't list ${provider} VMs: ${message}`);
-    if (vms.length === 0) return console.log("No agent VMs.");
+    const vms = selectedProject ? all.filter((vm) => vm.project === selectedProject) : all;
+    if (vms.length === 0) return console.log(selectedProject ? `No agent VMs in ${selectedProject}.` : "No agent VMs.");
     console.table(
       vms.map((vm) => {
         const rate = hourlyRate(vm);
         const cost = monthToDateCost(vm);
         return {
           name: vm.name,
+          project: vm.project ?? "",
           provider: vm.provider,
           id: vm.id,
           status: vm.status,
@@ -257,6 +267,17 @@ program
   .action(async (idOrName: string) => {
     const { ip } = await vmIp(idOrName);
     process.exitCode = await runRemote(ip, "sudo agent-vm-firewall status");
+  });
+
+program
+  .command("projects")
+  .description("List projects that have VMs")
+  .action(async () => {
+    const { vms } = await fleet().listVms();
+    const counts = new Map<string, number>();
+    for (const vm of vms) counts.set(vm.project ?? "(no project)", (counts.get(vm.project ?? "(no project)") ?? 0) + 1);
+    if (counts.size === 0) return console.log("No agent VMs. Launch into a project with: pnpm cli --project <name> create");
+    for (const [name, count] of [...counts].sort()) console.log(`${name.padEnd(32)} ${count} VM${count === 1 ? "" : "s"}`);
   });
 
 program

@@ -8,6 +8,7 @@ export interface LaunchOptions {
   sshPublicKey: string;
   tools: ToolId[];
   name?: string;
+  project?: string;
   region?: string;
   size?: string;
   image?: string;
@@ -28,6 +29,7 @@ export class AgentVms {
   launch(options: LaunchOptions): Promise<Vm> {
     return this.provider.createVm({
       name: options.name ?? newVmName(),
+      project: options.project,
       userData: buildCloudInit({ sshPublicKey: options.sshPublicKey, tools: options.tools }),
       region: options.region,
       size: options.size,

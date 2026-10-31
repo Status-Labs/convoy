@@ -58,6 +58,7 @@ export const aws: ProviderDefinition = {
 
 // Instances we manage carry this tag.
 const TAG = "agent-vm";
+const PROJECT_TAG = "agent-vm-project";
 const SECURITY_GROUP = "agent-vm-ssh";
 const DEFAULT_IMAGE = "ubuntu-24.04";
 const CANONICAL_OWNER = "099720108477";
@@ -150,6 +151,7 @@ function toVm(instance: Instance, region: string, pricing: VmPricing | null): Vm
     region,
     publicIp: instance.PublicIpAddress ?? null,
     createdAt: instance.LaunchTime?.toISOString() ?? new Date().toISOString(),
+    project: instance.Tags?.find((t) => t.Key === PROJECT_TAG)?.Value ?? null,
     pricing,
   };
 }
@@ -191,6 +193,7 @@ export class AwsProvider implements VmProvider {
     const tags = [
       { Key: "Name", Value: request.name },
       { Key: TAG, Value: "true" },
+      ...(request.project ? [{ Key: PROJECT_TAG, Value: request.project }] : []),
     ];
     const { Instances } = await this.call(region, (ec2) =>
       ec2.send(

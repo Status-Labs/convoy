@@ -1,6 +1,6 @@
 import { render } from "ink";
 import { Fleet, agentKeysFromEnv, configFromEnv } from "@agent-platform/core";
-import { loadLaunchPrefs } from "../prefs";
+import { loadLaunchPrefs, loadProjectPrefs } from "../prefs";
 import { App, SetupNeeded } from "./app";
 
 export async function runTui(sshKeyPath: string): Promise<void> {
@@ -14,7 +14,13 @@ export async function runTui(sshKeyPath: string): Promise<void> {
   }
 
   const app = render(
-    <App fleet={fleet} launchPrefs={loadLaunchPrefs(fleet)} sshKeyPath={sshKeyPath} keys={agentKeysFromEnv()} />,
+    <App
+      fleet={fleet}
+      launchPrefs={loadLaunchPrefs(fleet)}
+      sshKeyPath={sshKeyPath}
+      keys={agentKeysFromEnv()}
+      projects={loadProjectPrefs()}
+    />,
     { alternateScreen: true },
   );
   await app.waitUntilExit();

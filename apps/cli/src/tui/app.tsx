@@ -13,10 +13,11 @@ import {
   type Fleet,
   type FleetVm,
 } from "@agent-platform/core";
-import { saveLaunchPrefs, type LaunchPrefs } from "../prefs";
+import { saveCurrentProject, saveLaunchPrefs, type LaunchPrefs } from "../prefs";
 import { forgetHostKey, installKeys, openShell, runInteractive, waitForCloudInit } from "../ssh";
 import { Key } from "./key";
 import { LaunchForm } from "./launch-form";
+import { ProjectPicker } from "./project-picker";
 
 type Phase = "creating" | "booting" | "installing" | "ready" | "failed";
 
@@ -26,6 +27,7 @@ interface Job {
   phase: Phase;
   provider: string;
   region: string;
+  project: string | null;
   vmId?: string;
 }
 
@@ -45,6 +47,7 @@ export interface AppProps {
   launchPrefs: LaunchPrefs;
   sshKeyPath: string;
   keys: AgentKeys;
+  projects: { projects: string[]; current: string | null };
 }
 
 const REFRESH_MS = 10_000;
@@ -62,7 +65,7 @@ function age(iso: string): string {
   return `${Math.floor(minutes / 1440)}d`;
 }
 
-export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppProps) {
+export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projects: initialProjects }: AppProps) {
   const { exit, suspendTerminal } = useApp();
   const [list, setList] = useState<FleetVm[] | null>(null);
   const [jobs, setJobs] = useState<Record<string, Job>>({});
@@ -72,6 +75,10 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
   const [message, setMessage] = useState<Message>(null);
   const [picking, setPicking] = useState(false);
   const [launchPrefs, setLaunchPrefs] = useState(initialPrefs);
+  // null = all projects.
+  const [project, setProject] = useState(initialProjects.current);
+  const [savedProjects, setSavedProjects] = useState(initialProjects.projects);
+  const [pickingProject, setPickingProject] = useState(false);
   const summary = [
     fleet.clouds.map((c) => c.label).join(" + "),
     `next: ${fleet.cloud(launchPrefs.provider).label} ${launchPrefs.region} ${launchPrefs.size}`,
@@ -108,11 +115,13 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
   const updateJob = (name: string, patch: Partial<Job>) =>
     setJobs((current) => ({ ...current, [name]: { ...current[name], name, phase: "creating", ...patch } as Job }));
 
+  const inProject = (p: string | null) => project === null || p === project;
   // Newly launched VMs show up before the provider lists them.
-  const listed = list ?? [];
+  const listed = (list ?? []).filter((vm) => inProject(vm.project));
   const listedNames = new Set(listed.map((vm) => vm.name));
   const rows: Row[] = [
     ...Object.values(jobs)
+      .filter((job) => inProject(job.project))
       .filter((job) => !listedNames.has(job.name) && (job.phase === "creating" || job.phase === "booting"))
       .map((job) => ({ key: job.name, name: job.name, id: job.vmId, job, deleting: false })),
     ...listed.map((vm) => ({
@@ -145,10 +154,10 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
     }
 
     const name = newVmName();
-    updateJob(name, { phase: "creating", provider: choice.provider, region: choice.region });
+    updateJob(name, { phase: "creating", provider: choice.provider, region: choice.region, project });
     try {
       const { vms } = fleet.cloud(choice.provider);
-      const created = await vms.launch({ sshPublicKey, name, ...choice });
+      const created = await vms.launch({ sshPublicKey, name, project: project ?? undefined, ...choice });
       updateJob(name, { phase: "booting", vmId: created.id });
       void refresh();
       const vm = await vms.waitForRunning(created.id);
@@ -227,6 +236,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
 
     if (input === "q" || key.escape) return exit();
     if (input === "n") return setPicking(true);
+    if (input === "p") return setPickingProject(true);
     if (input === "r") {
       setMessage(null);
       return void refresh();
@@ -242,7 +252,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
       if (!row.id) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
       if (!row.deleting) setConfirmDelete(row);
     }
-  }, { isActive: !picking });
+  }, { isActive: !picking && !pickingProject });
 
   const header = (
     <Box flexDirection="column" marginBottom={1}>
@@ -250,11 +260,42 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
         <Text bold color="cyan">
           agent-vm
         </Text>
+        <Text bold>{project ?? "all projects"}</Text>
         <Text dimColor>{summary}</Text>
       </Box>
-      {list && list.length > 0 ? <CostSummary vms={list} now={now} /> : null}
+      {listed.length > 0 ? <CostSummary vms={listed} now={now} /> : null}
     </Box>
   );
+
+  if (pickingProject) {
+    const known = [...new Set([...savedProjects, ...(list ?? []).flatMap((vm) => (vm.project ? [vm.project] : []))])];
+    const choose = (next: string | null) => {
+      setProject(next);
+      saveCurrentProject(next);
+      setPickingProject(false);
+      setSelected(0);
+      setMessage(null);
+    };
+    return (
+      <Box flexDirection="column" paddingX={1} paddingY={1}>
+        {header}
+        <ProjectPicker
+          projects={known.sort().map((name) => ({
+            name,
+            vms: (list ?? []).filter((vm) => vm.project === name).length,
+          }))}
+          totalVms={list?.length ?? 0}
+          current={project}
+          onPick={choose}
+          onCreate={(name) => {
+            setSavedProjects((current) => [...new Set([...current, name])]);
+            choose(name);
+          }}
+          onCancel={() => setPickingProject(false)}
+        />
+      </Box>
+    );
+  }
 
   if (picking) {
     return (
@@ -264,6 +305,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
           fleet={fleet}
           initial={launchPrefs}
           keys={keys}
+          project={project}
           onLaunch={launch}
           onCancel={() => setPicking(false)}
         />
@@ -279,10 +321,17 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
         <Spinner label="Loading VMs…" />
       ) : rows.length === 0 ? (
         <Text>
-          No agent VMs yet. Press <Text bold color="cyan">n</Text> to launch one.
+          {project ? `No VMs in ${project} yet.` : "No agent VMs yet."} Press <Text bold color="cyan">n</Text> to launch
+          one{savedProjects.length === 0 ? <>, or <Text bold color="cyan">p</Text> to create a project</> : null}.
         </Text>
       ) : (
-        <VmTable rows={rows} selected={current} providerLabels={providerLabels} now={now} />
+        <VmTable
+          rows={rows}
+          selected={current}
+          providerLabels={providerLabels}
+          now={now}
+          showProject={project === null}
+        />
       )}
 
       <Box marginTop={1}>
@@ -305,6 +354,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
         <Key k="⏎" label="connect" />
         <Key k="l" label="sign in" />
         <Key k="d" label="delete" />
+        <Key k="p" label="project" />
         <Key k="r" label="refresh" />
         <Key k="q" label="quit" />
       </Box>
@@ -312,7 +362,8 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys }: AppP
   );
 }
 
-const COLUMNS = { name: 18, status: 19, ip: 16, cloud: 14, region: 11, rate: 9, cost: 12 };
+// Fits 110 columns with the project column (all-projects view).
+const COLUMNS = { name: 16, project: 11, status: 18, ip: 16, cloud: 13, region: 10, rate: 8, cost: 11 };
 
 // Total rate and month-to-date cost of the listed VMs, from list prices.
 function CostSummary({ vms, now }: { vms: FleetVm[]; now: Date }) {
@@ -334,15 +385,18 @@ interface VmTableProps {
   selected: number;
   providerLabels: Record<string, string>;
   now: Date;
+  /** In the all-projects view. */
+  showProject: boolean;
 }
 
-function VmTable({ rows, selected, providerLabels, now }: VmTableProps) {
+function VmTable({ rows, selected, providerLabels, now, showProject }: VmTableProps) {
   return (
     <Box flexDirection="column">
       <Box>
         <Text dimColor>
           {"  "}
           {"NAME".padEnd(COLUMNS.name)}
+          {showProject ? "PROJECT".padEnd(COLUMNS.project) : ""}
           {"STATUS".padEnd(COLUMNS.status)}
           {"IP".padEnd(COLUMNS.ip)}
           {"CLOUD".padEnd(COLUMNS.cloud)}
@@ -360,6 +414,13 @@ function VmTable({ rows, selected, providerLabels, now }: VmTableProps) {
             <Box width={COLUMNS.name}>
               <Text bold={isSelected}>{row.name}</Text>
             </Box>
+            {showProject && (
+              <Box width={COLUMNS.project}>
+                <Text wrap="truncate" dimColor={!(row.vm?.project ?? row.job?.project)}>
+                  {row.vm?.project ?? row.job?.project ?? "—"}
+                </Text>
+              </Box>
+            )}
             <Box width={COLUMNS.status}>
               <StatusCell row={row} />
             </Box>
@@ -370,7 +431,7 @@ function VmTable({ rows, selected, providerLabels, now }: VmTableProps) {
               <Text>{providerLabels[row.vm?.provider ?? row.job?.provider ?? ""]}</Text>
             </Box>
             <Box width={COLUMNS.region}>
-              <Text>{row.vm?.region ?? row.job?.region ?? ""}</Text>
+              <Text wrap="truncate">{row.vm?.region ?? row.job?.region ?? ""}</Text>
             </Box>
             <Box width={COLUMNS.rate}>
               <CostCell value={row.vm ? hourlyRate(row.vm) : undefined} format={formatRate} />

@@ -39,12 +39,15 @@ export const digitalocean: ProviderDefinition = {
 
 // Droplets we manage carry this tag, which the API can filter on.
 const TAG = "agent-vm";
+// Plus `agent-vm-project:<name>` when they belong to a project.
+const PROJECT_TAG = "agent-vm-project:";
 
 interface Droplet {
   id: number;
   name: string;
   status: string;
   created_at: string;
+  tags: string[];
   region: { slug: string };
   networks: { v4: { ip_address: string; type: string }[] };
   size: { price_hourly: number; price_monthly: number };
@@ -98,6 +101,7 @@ function toVm(droplet: Droplet): Vm {
     region: droplet.region.slug,
     publicIp: publicV4?.ip_address ?? null,
     createdAt: droplet.created_at,
+    project: droplet.tags.find((t) => t.startsWith(PROJECT_TAG))?.slice(PROJECT_TAG.length) ?? null,
     // Stopped droplets are billed in full; only deleting stops the charge.
     pricing: {
       hourly: droplet.size.price_hourly,
@@ -134,7 +138,7 @@ export class DigitalOceanProvider implements VmProvider {
       size,
       image: request.image ?? this.config.image,
       user_data: request.userData,
-      tags: [TAG],
+      tags: request.project ? [TAG, PROJECT_TAG + request.project] : [TAG],
     });
     return toVm(droplet);
   }

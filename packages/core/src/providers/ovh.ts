@@ -89,6 +89,7 @@ function toVm(instance: OvhInstance): Vm {
     region: instance.region,
     publicIp: publicV4?.ip ?? null,
     createdAt: instance.created,
+    project: null,
     // OVH prices come from a separate catalog API; not wired up yet.
     pricing: null,
   };
@@ -120,6 +121,7 @@ export class OvhProvider implements VmProvider {
   }
 
   async createVm(request: CreateVmRequest): Promise<Vm> {
+    if (request.project) throw new Error("Projects aren't supported on OVHcloud yet. Launch it outside a project.");
     const region = request.region ?? this.config.region;
     const [flavorId, imageId] = await Promise.all([
       this.resolveFlavorId(region, request.size ?? this.config.flavor),

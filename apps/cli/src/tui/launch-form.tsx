@@ -37,12 +37,14 @@ export interface LaunchFormProps {
   fleet: Fleet;
   initial: LaunchPrefs;
   keys: AgentKeys;
+  /** Project new VMs launch into, or null. */
+  project: string | null;
   onLaunch: (choice: LaunchPrefs, count: number) => void;
   onCancel: () => void;
 }
 
 /** n → provider → region → size → sign-in → tools. Enter on every step launches with the last choices. */
-export function LaunchForm({ fleet, initial, keys, onLaunch, onCancel }: LaunchFormProps) {
+export function LaunchForm({ fleet, initial, keys, project, onLaunch, onCancel }: LaunchFormProps) {
   const [step, setStep] = useState<Step>("provider");
   const [providerName, setProviderName] = useState(initial.provider);
   const [region, setRegion] = useState(initial.region);
@@ -78,7 +80,9 @@ export function LaunchForm({ fleet, initial, keys, onLaunch, onCancel }: LaunchF
 
   return (
     <Box flexDirection="column">
-      <Text bold>New agent VM</Text>
+      <Text bold>
+        New agent VM{project ? <Text> in {project}</Text> : <Text dimColor> (no project · p on the list to pick one)</Text>}
+      </Text>
       <Box marginTop={1} flexDirection="column">
         <StepLine label="Cloud" active={step === "provider"} value={cloud.label} />
         <StepLine

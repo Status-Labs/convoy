@@ -18,6 +18,9 @@ interface PrefsFile {
   provider?: string;
   tools?: string[];
   signIn?: SignInMode;
+  // Projects created here, and the one the TUI shows (absent = all).
+  projects?: string[];
+  project?: string;
   // Region and size slugs are provider-specific.
   providers?: Record<string, { region?: string; size?: string }>;
 }
@@ -56,10 +59,30 @@ export function saveLaunchPrefs({ provider, region, size, tools, signIn }: Launc
   prefs.tools = tools;
   prefs.signIn = signIn;
   prefs.providers = { ...prefs.providers, [provider]: { region, size } };
+  writePrefs(prefs);
+}
+
+function writePrefs(prefs: PrefsFile): void {
   try {
     mkdirSync(dirname(PREFS_PATH), { recursive: true });
     writeFileSync(PREFS_PATH, JSON.stringify(prefs, null, 2) + "\n");
   } catch {
-    // Remembering choices is a convenience; never block a launch on it.
+    // Remembering choices is a convenience; never block on it.
   }
+}
+
+export function loadProjectPrefs(): { projects: string[]; current: string | null } {
+  const prefs = readPrefs();
+  return { projects: prefs.projects ?? [], current: prefs.project ?? null };
+}
+
+export function saveCurrentProject(project: string | null): void {
+  const prefs = readPrefs();
+  if (project) {
+    prefs.project = project;
+    if (!prefs.projects?.includes(project)) prefs.projects = [...(prefs.projects ?? []), project];
+  } else {
+    delete prefs.project;
+  }
+  writePrefs(prefs);
 }

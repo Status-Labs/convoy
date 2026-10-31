@@ -9,6 +9,8 @@ export interface Vm {
   region: string;
   publicIp: string | null;
   createdAt: string;
+  /** The project this VM belongs to, or null. See projects.ts. */
+  project: string | null;
   /** List prices for this VM, or null when the provider doesn't say. */
   pricing: VmPricing | null;
 }
@@ -42,6 +44,8 @@ export interface Size {
 
 export interface CreateVmRequest {
   name: string;
+  /** Project to tag the VM with. */
+  project?: string;
   userData: string;
   region?: string;
   size?: string;

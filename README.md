@@ -16,7 +16,9 @@ cp .env.example .env   # fill in credentials for one or more providers
 pnpm cli               # open the interactive TUI
 ```
 
-In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `d` deletes, `q` quits.
+In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `l` signs in the agent tools, `p` switches project, `d` deletes, `q` quits.
+
+**Projects** group VMs, e.g. one per codebase or client. Press `p` to create or switch projects; new VMs launch into the current one and the list shows only its VMs (or all projects). A VM's project is stored as a tag on the VM at the cloud provider (DigitalOcean tag `agent-vm-project:<name>`, AWS tag `agent-vm-project`), so it's the same from any machine. OVHcloud doesn't support projects yet.
 
 The list shows each VM's hourly rate and its estimated cost so far this month, with totals at the top. Estimates come from list prices and run time: DigitalOcean bills per second (60s minimum, capped at the monthly price), so compute matches the bill; AWS rates come from the AWS Pricing API (needs `pricing:GetProducts`) and include the 40 GB disk and public IPv4 address. Not included: extra bandwidth, snapshots, and AWS burst-credit charges. DigitalOcean bills stopped VMs in full, which the list flags as `stopped, billed`.
 
@@ -36,6 +38,9 @@ pnpm cli keys <name>   # re-apply API keys from .env to a VM
 pnpm cli delete <name>
 
 pnpm cli --provider aws create   # launch on a non-default cloud
+pnpm cli --project my-app create # launch into a project
+pnpm cli --project my-app list   # only that project's VMs
+pnpm cli projects                # projects and their VM counts
 ```
 
 ## What every VM gets
