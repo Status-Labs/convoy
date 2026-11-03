@@ -14,7 +14,15 @@ import {
   type FleetVm,
 } from "@agent-platform/core";
 import { saveCurrentProject, saveLaunchPrefs, type LaunchPrefs } from "../prefs";
-import { forgetHostKey, installKeys, openShell, runInteractive, waitForCloudInit } from "../ssh";
+import {
+  forgetHostKey,
+  installKeys,
+  joinTailnet,
+  leaveTailnet,
+  openShell,
+  runInteractive,
+  waitForCloudInit,
+} from "../ssh";
 import { Key } from "./key";
 import { LaunchForm } from "./launch-form";
 import { ProjectPicker } from "./project-picker";
@@ -215,18 +223,34 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       void refresh();
       await waitForCloudInit(vm.publicIp!);
       updateJob(name, { phase: "ready" });
-      if (choice.signIn === "subscription") {
-        setMessage({ text: `${name} is ready. Select it and press l to sign in the agent tools.`, tone: "success" });
+      // Problems after setup leave a working VM; each has a command to retry it.
+      const problems: string[] = [];
+      let tailnetName: string | null = null;
+      if (choice.tailscale && keys.tailscale) {
+        try {
+          tailnetName = await joinTailnet(vm.publicIp!, keys.tailscale, name);
+        } catch (err) {
+          problems.push(`${errorText(err)} (retry: pnpm cli tailscale ${name})`);
+        }
+      }
+      if (choice.signIn === "api-keys") {
+        try {
+          await installKeys(vm.publicIp!, keys);
+        } catch (err) {
+          problems.push(`${errorText(err)} (retry: pnpm cli keys ${name})`);
+        }
+      }
+      if (problems.length > 0) {
+        setMessage({ text: `${name} is ready, but ${problems.join("; ")}`, tone: "error" });
         return;
       }
-      try {
-        await installKeys(vm.publicIp!, keys);
-      } catch (err) {
-        // The VM works; only the tools' sign-in is missing. `pnpm cli keys` retries it.
-        setMessage({ text: `${name} is ready, but ${errorText(err)}. Retry: pnpm cli keys ${name}`, tone: "error" });
-        return;
-      }
-      setMessage({ text: `${name} is ready. Select it and press enter to connect.`, tone: "success" });
+      const next = [
+        choice.signIn === "subscription" || (choice.tailscale && !keys.tailscale)
+          ? "Select it and press l to sign in"
+          : "Select it and press enter to connect",
+        tailnetName ? `On your phone: ssh agent@${tailnetName}` : null,
+      ];
+      setMessage({ text: `${name} is ready. ${next.filter(Boolean).join(". ")}.`, tone: "success" });
     } catch (err) {
       updateJob(name, { phase: "failed" });
       setMessage({ text: `${name}: ${errorText(err)}`, tone: "error" });
@@ -262,6 +286,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     const id = row.id!;
     setDeleting((current) => new Set(current).add(id));
     try {
+      if (row.vm?.status === "running" && row.vm.publicIp) await leaveTailnet(row.vm.publicIp);
       await fleet.cloud(row.vm?.provider ?? row.job!.provider).vms.provider.deleteVm(id);
       if (row.vm?.publicIp) forgetHostKey(row.vm.publicIp);
       setJobs(({ [row.name]: _, ...rest }) => rest);

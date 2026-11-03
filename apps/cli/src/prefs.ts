@@ -12,12 +12,15 @@ export interface LaunchPrefs {
   size: string;
   tools: ToolId[];
   signIn: SignInMode;
+  /** Put new VMs on the user's tailnet (phone access). */
+  tailscale: boolean;
 }
 
 interface PrefsFile {
   provider?: string;
   tools?: string[];
   signIn?: SignInMode;
+  tailscale?: boolean;
   // Projects created here, and the one the TUI shows (absent = all).
   projects?: string[];
   project?: string;
@@ -50,14 +53,15 @@ export function loadLaunchPrefs(fleet: Fleet): LaunchPrefs {
   // Drop tools that no longer exist in the catalog.
   const tools = prefs.tools?.filter((id): id is ToolId => ALL_TOOL_IDS.includes(id as ToolId));
   const signIn = prefs.signIn === "api-keys" ? "api-keys" : "subscription";
-  return { provider, ...placementFor(fleet, provider), tools: tools ?? ALL_TOOL_IDS, signIn };
+  return { provider, ...placementFor(fleet, provider), tools: tools ?? ALL_TOOL_IDS, signIn, tailscale: prefs.tailscale === true };
 }
 
-export function saveLaunchPrefs({ provider, region, size, tools, signIn }: LaunchPrefs): void {
+export function saveLaunchPrefs({ provider, region, size, tools, signIn, tailscale }: LaunchPrefs): void {
   const prefs = readPrefs();
   prefs.provider = provider;
   prefs.tools = tools;
   prefs.signIn = signIn;
+  prefs.tailscale = tailscale;
   prefs.providers = { ...prefs.providers, [provider]: { region, size } };
   writePrefs(prefs);
 }

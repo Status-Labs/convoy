@@ -1,3 +1,4 @@
+import { TAILSCALE_SIGN_IN } from "./tailscale";
 import { AGENT_TOOLS, type ToolId } from "./tools";
 
 // API keys copied onto VMs so agent tools work without signing in on each one.
@@ -19,12 +20,15 @@ export type SignInMode = "subscription" | "api-keys";
 export interface AgentKeys {
   anthropic?: string;
   openai?: string;
+  /** Tailscale auth key, used in either sign-in mode to join VMs to the tailnet. */
+  tailscale?: string;
 }
 
 export function agentKeysFromEnv(env: NodeJS.ProcessEnv = process.env): AgentKeys {
   return {
     anthropic: env.ANTHROPIC_API_KEY?.trim() || undefined,
     openai: env.OPENAI_API_KEY?.trim() || undefined,
+    tailscale: env.TAILSCALE_AUTH_KEY?.trim() || undefined,
   };
 }
 
@@ -101,8 +105,8 @@ export function keySetupScript(keys: AgentKeys): string | null {
 }
 
 /**
- * Interactive script that signs in Claude Code and Codex on a VM through each
- * vendor's own login flow, skipping tools that are already signed in. Run it
+ * Interactive script that signs in Claude Code, Codex and Tailscale on a VM
+ * through each vendor's own login flow, skipping tools that are already signed in. Run it
  * in a terminal over `ssh -t`. Holds no secrets.
  */
 export const SIGN_IN_SCRIPT = `
@@ -127,5 +131,6 @@ fi
 if command -v opencode >/dev/null; then
   echo; echo "OpenCode: add a provider on the VM with: opencode auth login"
 fi
+${TAILSCALE_SIGN_IN}
 echo; read -rp "Press enter to go back. " _
 `;

@@ -8,3 +8,4 @@ export * from "./fleet";
 export * from "./cost";
 export * from "./credentials";
 export * from "./projects";
+export * from "./tailscale";

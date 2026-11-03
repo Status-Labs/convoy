@@ -155,10 +155,13 @@ export function LaunchForm({ fleet, initial, keys, project, onLaunch, onCancel }
         {step === "tools" && (
           <ToolStep
             initial={initial.tools}
+            initialTailscale={initial.tailscale}
             keys={keys}
             mode={signIn}
             summary={`${cloud.label} ${region} · ${sizeLabel(size, sizeInfo)}`}
-            onLaunch={(tools, count) => onLaunch({ provider: providerName, region, size, tools, signIn }, count)}
+            onLaunch={(tools, tailscale, count) =>
+              onLaunch({ provider: providerName, region, size, tools, signIn, tailscale }, count)
+            }
             onBack={() => setStep("signin")}
           />
         )}
@@ -523,24 +526,30 @@ const MAX_COUNT = 10;
 
 interface ToolStepProps {
   initial: ToolId[];
+  initialTailscale: boolean;
   keys: AgentKeys;
   mode: SignInMode;
   summary: string;
-  onLaunch: (tools: ToolId[], count: number) => void;
+  onLaunch: (tools: ToolId[], tailscale: boolean, count: number) => void;
   onBack: () => void;
 }
 
-function ToolStep({ initial, keys, mode, summary, onLaunch, onBack }: ToolStepProps) {
+// The Tailscale row sits below the tools, at this cursor position.
+const TAILSCALE_ROW = AGENT_TOOLS.length;
+
+function ToolStep({ initial, initialTailscale, keys, mode, summary, onLaunch, onBack }: ToolStepProps) {
   // Tools missing a required API key can't be picked.
   const available = AGENT_TOOLS.filter((tool) => !missingKey(tool.id, keys, mode)).map((tool) => tool.id);
   const [cursor, setCursor] = useState(0);
   const [count, setCount] = useState(1);
   const [chosen, setChosen] = useState<Set<ToolId>>(new Set(initial.filter((id) => available.includes(id))));
+  const [tailscale, setTailscale] = useState(initialTailscale);
 
   useInput((input, key) => {
     if (key.escape) return onBack();
     if (key.upArrow || input === "k") return setCursor((c) => Math.max(0, c - 1));
-    if (key.downArrow || input === "j") return setCursor((c) => Math.min(AGENT_TOOLS.length - 1, c + 1));
+    if (key.downArrow || input === "j") return setCursor((c) => Math.min(TAILSCALE_ROW, c + 1));
+    if (input === " " && cursor === TAILSCALE_ROW) return setTailscale((on) => !on);
     if (input === " ") {
       const id = AGENT_TOOLS[cursor]!.id;
       if (!available.includes(id)) return;
@@ -555,7 +564,9 @@ function ToolStep({ initial, keys, mode, summary, onLaunch, onBack }: ToolStepPr
     }
     if (input === "+" || input === "=" || key.rightArrow) return setCount((c) => Math.min(MAX_COUNT, c + 1));
     if (input === "-" || key.leftArrow) return setCount((c) => Math.max(1, c - 1));
-    if (key.return) onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id), count);
+    if (key.return) {
+      onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id), tailscale, count);
+    }
   });
 
   return (
@@ -585,6 +596,20 @@ function ToolStep({ initial, keys, mode, summary, onLaunch, onBack }: ToolStepPr
         );
       })}
 
+      <Box marginTop={1}>
+        <Text color="cyan">{cursor === TAILSCALE_ROW ? "❯ " : "  "}</Text>
+        <Text color={tailscale ? "green" : undefined} dimColor={!tailscale}>
+          {tailscale ? "[x] " : "[ ] "}
+        </Text>
+        <Box width={16}>
+          <Text bold={cursor === TAILSCALE_ROW}>Tailscale</Text>
+        </Box>
+        <Box width={44}>
+          <Text dimColor>Reach it from your phone, no open ports</Text>
+        </Box>
+        <Text dimColor>{keys.tailscale ? "joins with TAILSCALE_AUTH_KEY" : "sign in on the VM"}</Text>
+      </Box>
+
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>Always included: security updates, firewall (SSH only), fail2ban,</Text>
         <Text dimColor>automatic security patches, git, Node.js, Python, tmux.</Text>
@@ -594,6 +619,7 @@ function ToolStep({ initial, keys, mode, summary, onLaunch, onBack }: ToolStepPr
         <Text>
           Launch <Text bold>{count === 1 ? "1 VM" : `${count} VMs`}</Text> on <Text bold>{summary}</Text>
           {chosen.size === 0 ? " with no tools" : ` with ${chosen.size} tool${chosen.size === 1 ? "" : "s"}`}
+          {tailscale ? " on your tailnet" : ""}
         </Text>
       </Box>
       {count > 1 && mode === "subscription" && (

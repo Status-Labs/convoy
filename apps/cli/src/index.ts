@@ -25,6 +25,8 @@ import {
   forgetHostKey,
   forwardPort,
   installKeys,
+  joinTailnet,
+  leaveTailnet,
   openShell,
   runInteractive,
   runRemote,
@@ -108,6 +110,7 @@ program
   .option("--ssh-key <path>", "public key to install", defaultSshKey)
   .option("--tools <ids>", `comma-separated tools to install, or "none" (default: all: ${ALL_TOOL_IDS.join(",")})`)
   .option("--api-keys", "set up tools with the API keys in .env (default: sign in yourself with `login`)")
+  .option("--tailscale", "put the VM on your tailnet for phone access (joins with TAILSCALE_AUTH_KEY, else `login`)")
   .option("--no-wait", "return as soon as the VM is created")
   .action(async (opts) => {
     const sshPublicKey = readFileSync(expandHome(opts.sshKey), "utf8");
@@ -123,6 +126,7 @@ program
     const created = await target.vms.launch({
       sshPublicKey,
       tools,
+      tailscale: opts.tailscale,
       project: selectedProject,
       name: opts.name,
       region: opts.region,
@@ -147,8 +151,12 @@ program
     if (mode === "api-keys" && (await installKeys(vm.publicIp!, keys))) {
       console.log("  agent tools set up with your API keys");
     }
+    const tailnetName = opts.tailscale && keys.tailscale ? await joinTailnet(vm.publicIp!, keys.tailscale, vm.name) : null;
     console.log(`Ready. Connect with:\n  pnpm cli ssh ${vm.name}\n  ${sshCommand(vm.publicIp!)}`);
-    if (mode === "subscription") console.log(`Sign in agent tools with:\n  pnpm cli login ${vm.name}`);
+    if (tailnetName) console.log(`From your phone (Tailscale app + an SSH app):\n  ssh agent@${tailnetName}`);
+    if (mode === "subscription" || (opts.tailscale && !keys.tailscale)) {
+      console.log(`Sign in ${opts.tailscale && !keys.tailscale ? "agent tools and Tailscale" : "agent tools"} with:\n  pnpm cli login ${vm.name}`);
+    }
   });
 
 program
@@ -208,6 +216,19 @@ program
   });
 
 program
+  .command("tailscale <vm>")
+  .description("Put a VM on your tailnet with TAILSCALE_AUTH_KEY from .env, installing Tailscale if needed")
+  .action(async (idOrName: string) => {
+    const { name, ip } = await vmIp(idOrName);
+    const authKey = agentKeysFromEnv().tailscale;
+    if (!authKey) {
+      throw new Error(`No TAILSCALE_AUTH_KEY in .env (see .env.example). Or sign in on the VM: pnpm cli ssh ${name}, then sudo tailscale up --ssh`);
+    }
+    const tailnetName = await joinTailnet(ip, authKey, name);
+    console.log(`${name} is on your tailnet. From your phone (Tailscale app + an SSH app):\n  ssh agent@${tailnetName}`);
+  });
+
+program
   .command("sleep <vm>")
   .description("Put a VM to sleep so it costs only storage (DigitalOcean: snapshot + delete; AWS: stop)")
   .option("-y, --yes", "skip confirmation")
@@ -247,6 +268,7 @@ program
   .action(async (idOrName: string, opts) => {
     const { vm, cloud } = await fleet().findVm(idOrName);
     if (!opts.yes && !(await confirm(`Delete ${vm.name} (${vm.id}) on ${cloud.label}?`))) return;
+    if (vm.status === "running" && vm.publicIp) await leaveTailnet(vm.publicIp);
     await cloud.vms.provider.deleteVm(vm.id);
     if (vm.publicIp) forgetHostKey(vm.publicIp);
     console.log(`Deleted ${vm.name}`);

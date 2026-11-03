@@ -2,7 +2,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { VM_USER, keySetupScript, type AgentKeys } from "@agent-platform/core";
+import {
+  TAILSCALE_LEAVE_SCRIPT,
+  VM_USER,
+  keySetupScript,
+  tailscaleJoinScript,
+  type AgentKeys,
+} from "@agent-platform/core";
 
 // VMs get recycled IPs, so keep their host keys out of ~/.ssh/known_hosts.
 const KNOWN_HOSTS = join(homedir(), ".config", "agent-vm", "known_hosts");
@@ -39,15 +45,22 @@ export function runRemote(ip: string, command: string): Promise<number> {
 
 // Runs a bash script on the VM, passed on stdin so secrets in it never show up
 // in command lines or process listings.
-export function runScript(ip: string, script: string): Promise<{ code: number; stderr: string }> {
+export function runScript(
+  ip: string,
+  script: string,
+  { timeoutMs }: { timeoutMs?: number } = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
+    let stdout = "";
     let stderr = "";
-    const child = spawn("ssh", [...sshArgs(ip, ["-o", "BatchMode=yes"]), "bash -s"], {
-      stdio: ["pipe", "ignore", "pipe"],
+    const child = spawn("ssh", [...sshArgs(ip, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]), "bash -s"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: timeoutMs,
     });
+    child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    child.on("exit", (code) => resolve({ code: code ?? 1, stderr: stderr.trim() }));
-    child.on("error", (err) => resolve({ code: 1, stderr: err.message }));
+    child.on("exit", (code) => resolve({ code: code ?? 1, stdout: stdout.trim(), stderr: stderr.trim() }));
+    child.on("error", (err) => resolve({ code: 1, stdout: "", stderr: err.message }));
     child.stdin.end(script);
   });
 }
@@ -59,6 +72,21 @@ export async function installKeys(ip: string, keys: AgentKeys): Promise<boolean>
   const { code, stderr } = await runScript(ip, script);
   if (code !== 0) throw new Error(`couldn't set up API keys on the VM: ${stderr || `exit ${code}`}`);
   return true;
+}
+
+/** Joins the VM to the user's tailnet with the auth key from .env. Returns its tailnet name. */
+export async function joinTailnet(ip: string, authKey: string, hostname: string): Promise<string> {
+  const { code, stdout, stderr } = await runScript(ip, tailscaleJoinScript(authKey, hostname), { timeoutMs: 5 * 60_000 });
+  if (code !== 0) throw new Error(`couldn't join the tailnet: ${stderr.split("\n").at(-1) || `exit ${code}`}`);
+  return stdout.split("\n").at(-1) || hostname;
+}
+
+/**
+ * Signs a VM out of the tailnet before it's deleted, so it doesn't linger in
+ * the user's device list. Best effort: never blocks a delete.
+ */
+export async function leaveTailnet(ip: string): Promise<void> {
+  await runScript(ip, TAILSCALE_LEAVE_SCRIPT, { timeoutMs: 20_000 });
 }
 
 // Runs a script on the VM in an interactive terminal. The script travels

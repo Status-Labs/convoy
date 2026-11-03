@@ -29,6 +29,8 @@ The list shows each VM's hourly rate and its estimated cost so far this month, w
 
 **Signing in agent tools.** At launch, choose *Sign in yourself* to use your Claude or ChatGPT plan (press `l` on the VM when it's ready), or *API keys from .env* for swarms: tools are signed in on boot, and you can launch up to 10 VMs at once. See [docs/agent-credentials.md](docs/agent-credentials.md).
 
+**From your phone.** Tick *Tailscale* at the tools step (`create --tailscale`) to put the VM on your private Tailscale network. Your phone's SSH app can then connect from anywhere with `ssh agent@<vm-name>`, signed in with your Tailscale account, and no port is opened to the internet. See [docs/phone-access.md](docs/phone-access.md).
+
 The same actions are available as commands for scripting:
 
 ```sh
@@ -40,6 +42,7 @@ pnpm cli list          # VMs on every enabled cloud
 pnpm cli ssh <name>
 pnpm cli login <name>  # sign in agent tools with your own accounts
 pnpm cli keys <name>   # re-apply API keys from .env to a VM
+pnpm cli tailscale <name>  # put an existing VM on your tailnet
 pnpm cli delete <name>
 
 pnpm cli --provider aws create   # launch on a non-default cloud
