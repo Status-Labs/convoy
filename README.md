@@ -31,7 +31,7 @@ The list shows each VM's hourly rate and its estimated cost so far this month, w
 
 **From your phone.** Tick *Tailscale* at the tools step (`create --tailscale`) to put the VM on your private Tailscale network. Your phone's SSH app can then connect from anywhere with `ssh agent@<vm-name>`, signed in with your Tailscale account, and no port is opened to the internet. See [docs/phone-access.md](docs/phone-access.md).
 
-**A desktop.** Tick *Desktop* at the tools step (`create --desktop`) for a Linux desktop with Firefox that you open in a browser: press `g` on the VM, or use `pnpm cli desktop <vm> --phone` for a QR code to open it on your phone over Tailscale. Nothing is opened to the internet. See [docs/desktop.md](docs/desktop.md).
+**A desktop.** Tick *Desktop* at the tools step (`create --desktop`) for a Linux desktop (XFCE on the VM's Ubuntu 24.04, with Firefox) that you open in a browser: press `g` on the VM, or use `pnpm cli desktop <vm> --phone` for a QR code to open it on your phone over Tailscale. Nothing is opened to the internet. See [docs/desktop.md](docs/desktop.md).
 
 The same actions are available as commands for scripting:
 
