@@ -10,3 +10,7 @@ export * from "./credentials";
 export * from "./projects";
 export * from "./tailscale";
 export * from "./desktop";
+export * from "./github";
+export * from "./metrics";
+export * from "./vm-info";
+export * from "./idle";

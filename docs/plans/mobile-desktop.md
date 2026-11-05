@@ -1,6 +1,6 @@
 # Linux Desktop on Agent VMs, Viewable from a Phone
 
-> Status: D1–D4 shipped (see [desktop.md](../desktop.md)); D5 (RDP) not started. Phone path (D3) untested with a real tailnet. Last updated 2026-11-04.
+> Status: D1–D4 shipped (see [desktop.md](../desktop.md)); D5 (RDP) not started. Phone path (D3) untested with a real tailnet. Last updated 2026-11-05.
 > Builds on [phone-access.md](../phone-access.md) (Tailscale), which shipped first: the desktop is reached over the tailnet or an SSH tunnel, never an open port.
 
 ## 1. Goal
@@ -32,7 +32,7 @@ A desktop needs a bigger VM: plan on **4 GB RAM minimum** (`s-2vcpu-4gb`, ~$24/m
 - [x] cloud-init installs XFCE (minimal, `xfce4` + `xfce4-terminal` + `dbus-x11`, no recommended extras) and KasmVNC (the `.deb` for the image's Ubuntu release from KasmVNC's GitHub releases, pinned version, checksum verified).
 - [x] KasmVNC runs as the `agent` user under a systemd unit (`agent-vm-desktop`), on display `:1`, listening on `127.0.0.1:8444` only. Phones reach it through `tailscale serve`, not a tailnet listener.
 - [x] A random desktop password per VM, generated on the VM at setup, stored mode 600 in `~/.config/agent-vm/desktop-password`. The CLI reads it over SSH to show it; it never goes in cloud-init user data.
-- [ ] Setup takes a minute or two longer (about 95s in testing). Show "installing desktop" as its own phase in the TUI. (Not yet: it's part of "installing tools".)
+- [x] Setup takes a minute or two longer (about 95s in testing). Show "installing desktop" as its own phase in the TUI. (Every setup step now shows in the VM's row, e.g. "adding desktop".)
 - [x] Firefox (or Chromium) on the desktop so the user can browse alongside agents. agent-browser's Chromium can also run headed on this display (`DISPLAY=:1`), so the user watches what the agent does.
 
 ### D2: Open it from the laptop
@@ -47,7 +47,7 @@ A desktop needs a bigger VM: plan on **4 GB RAM minimum** (`s-2vcpu-4gb`, ~$24/m
 
 ### D4: Desktop on existing VMs
 - [x] `pnpm cli desktop <vm> --install` adds the desktop to a VM launched without it (same script as cloud-init, run over SSH).
-- [ ] `--uninstall` removes it to free RAM.
+- [x] `--uninstall` removes it to free RAM: stops the service, purges KasmVNC, XFCE and Firefox, stops `tailscale serve`.
 
 ### D5: Optional RDP
 - [ ] xrdp bound to localhost and the tailnet, using the same XFCE session setup.

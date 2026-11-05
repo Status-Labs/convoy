@@ -63,3 +63,11 @@ OpenAI documents copying `~/.codex/auth.json` to a headless machine, but its [CI
 - **OpenCode** reads the key files through `{file:...}` references in `~/.config/opencode/opencode.json`.
 
 Anyone who gets into a VM, including an agent running there, can read these keys. Use keys with spending limits, and rotate them in the provider's console if a VM may have been compromised. Snapshots of a VM include the keys.
+
+## Snapshots and copies
+
+A VM launched from a snapshot ([snapshots.md](snapshots.md)) starts signed out of Claude and ChatGPT plans: on its first boot, before anything else runs, it removes Claude Code's subscription login (`~/.claude/.credentials.json`) and a Codex ChatGPT login (`~/.codex/auth.json` with tokens). Press `l` on the copy to sign in through each vendor's own flow. API keys are kept, so API-key VMs work straight away. Waking a sleeping VM keeps its logins: it's the same machine, not a copy.
+
+## GitHub
+
+`GITHUB_TOKEN` in `.env` is installed in both sign-in modes; see [github.md](github.md).

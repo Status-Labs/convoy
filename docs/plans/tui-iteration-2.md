@@ -1,6 +1,6 @@
 # TUI Iteration 2: Regions and Snapshots
 
-> Status: R1 done (no Source step yet; it arrives with snapshots in S3). Last updated 2026-10-30.
+> Status: R1, S1–S3 and park (as sleep/wake) done; copying snapshots between regions not started. Snapshots shipped differently from the sketch below: no Source step in the launch form, copies launch from the Snapshots view (`tab`) or `create --snapshot`. See [snapshots.md](../snapshots.md). Last updated 2026-11-05.
 > Follows [tui-node-management.md](tui-node-management.md). This iteration pulls M5 (launch form) forward and adds snapshots. The detail view and metrics (M1–M2) come after.
 
 ## 1. Goal
@@ -49,26 +49,26 @@ OVH supports instance snapshots too (`POST /cloud/project/{p}/instance/{id}/snap
 - [x] CLI parity: `create --region` already exists; add `pnpm cli regions --size s-2vcpu-4gb` to show where a size is available.
 
 ### S1: Take a snapshot
-- [ ] `s` on a VM in the list → confirm panel:
+- [x] `b` on a VM in the list (`s` is sleep) → confirm (y/N; safe only, `--live` on the CLI):
   ```
   Snapshot agent-vm-3fa1?   name: agent-vm-3fa1-2026-10-30
   ( ) Live — VM keeps running, disk may be mid-write
   (•) Safe — shut down, snapshot, start again (VM offline ~2–5 min)
   Storage: ~$0.06/GB/month. enter to start · esc to cancel
   ```
-- [ ] **Safe** is the default: graceful shutdown (`shutdown` action, then `power_off` if it doesn't stop within 60s), snapshot, `power_on`, and wait until SSH is back.
-- [ ] Progress shows in the VM row: `◐ snapshotting 3m`. Other VMs stay usable.
+- [x] **Safe** is the default: graceful shutdown (`shutdown` action, then `power_off` if it doesn't stop within 60s), snapshot, `power_on`, and wait until SSH is back.
+- [x] Progress shows in the VM row: `◐ snapshotting 3m`. Other VMs stay usable.
 - [ ] Before a live snapshot, run `sync` over SSH. Don't run `cloud-init clean` (it would make the full setup run again on restore). §4 covers how restore handles per-machine state.
 
 ### S2: Snapshots screen
-- [ ] `tab` switches between **VMs** and **Snapshots**.
-- [ ] Snapshot list: name, source VM, size (GB), regions, created, $/month. The header shows the total snapshot cost.
-- [ ] Keys: `enter` launch from it (opens the launch form with the source set), `d` delete (y/N), `c` copy to region (S4), `r` refresh.
+- [x] `tab` switches between **VMs** and **Snapshots**.
+- [x] Snapshot list: name, source VM, size (GB), regions, created, $/month. The header shows the total snapshot cost.
+- [x] Keys: `enter` launches a copy (same size and region, into the current project), `d` delete (y/N), `r` refresh. `c` copy to region (S4) not built.
 
 ### S3: Launch from a snapshot
-- [ ] Launch form with source = snapshot: region limited to the snapshot's regions, and sizes limited to `disk ≥ min_disk_size`.
-- [ ] Uses a small **restore** cloud-init instead of the full bootstrap (§4). Launch to SSH-ready in ~1 minute instead of ~4–5.
-- [ ] Verify after launch: same markers check as today, plus the security baseline still holds (ufw active, sshd config) via a lightweight `agent-vm-doctor` script that ships on every VM.
+- [ ] Launch form with source = snapshot (not built: copies use the snapshot's size and region; the CLI takes `--size`/`--region`, and DigitalOcean rejects a too-small disk).
+- [x] Uses a small **restore** cloud-init instead of the full bootstrap (§4): new SSH host keys, its own Tailscale identity, empty fail2ban list, and subscription logins (Claude OAuth, Codex ChatGPT) removed so they're never copied between machines.
+- [ ] Verify after launch with an `agent-vm-doctor` baseline audit (copies use the same markers check as today; the doctor script isn't built).
 
 ### S4: Park and copy (stretch)
 - [x] **Park** shipped as **sleep/wake** (`s`/`w`, `pnpm cli sleep|wake`): graceful shutdown → snapshot → tag (`agent-vm-asleep`, size, project) → delete; wake recreates the droplet with a small wake cloud-init (`buildWakeCloudInit`: SSH key + re-lock root's password) and deletes the snapshot. On AWS it's stop/start. Tested on DigitalOcean: sleep 58s, wake 90s, 2.68 GB snapshot; disk, baseline and locked root survived.

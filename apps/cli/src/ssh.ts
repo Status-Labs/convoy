@@ -8,12 +8,24 @@ import {
   DESKTOP_PHONE_OFF_SCRIPT,
   DESKTOP_PHONE_SCRIPT,
   DESKTOP_PORT,
+  DESKTOP_UNINSTALL_SCRIPT,
+  METRICS_COLLECTOR,
+  MetricsParser,
+  VM_INFO_SCRIPT,
+  parseVmInfo,
+  type MetricsSample,
+  type VmInfo,
   TAILSCALE_LEAVE_SCRIPT,
+  cloneScript,
   desktopInstallScript,
+  parseCloneOutput,
   VM_USER,
   keySetupScript,
   tailscaleJoinScript,
   type AgentKeys,
+  type CloneResult,
+  type GitIdentity,
+  type RepoRef,
 } from "@agent-platform/core";
 
 // VMs get recycled IPs, so keep their host keys out of ~/.ssh/known_hosts.
@@ -45,6 +57,15 @@ export function openShell(ip: string): Promise<number> {
   return run(sshArgs(ip), "inherit");
 }
 
+/** The tmux session `t` attaches to; created on first use. */
+export const TMUX_SESSION = "agent";
+
+// Attaches to the VM's persistent tmux session, creating it if needed.
+// Programs in it keep running after you disconnect (Ctrl+B then D detaches).
+export function openTmux(ip: string): Promise<number> {
+  return run([...sshArgs(ip, ["-t"]), `tmux new-session -A -s ${TMUX_SESSION}`], "inherit");
+}
+
 export function runRemote(ip: string, command: string): Promise<number> {
   return run([...sshArgs(ip), command], "inherit");
 }
@@ -71,13 +92,33 @@ export function runScript(
   });
 }
 
-/** Configures the VM's agent tools with the API keys from .env. */
-export async function installKeys(ip: string, keys: AgentKeys): Promise<boolean> {
-  const script = keySetupScript(keys);
+/**
+ * Configures the VM's agent tools with the API keys from .env, signs git in
+ * with the GitHub token and sets the commit identity. Returns false if there
+ * was nothing to set up.
+ */
+export async function installKeys(ip: string, keys: AgentKeys, identity?: GitIdentity | null): Promise<boolean> {
+  const script = keySetupScript(keys, identity);
   if (!script) return false;
-  const { code, stderr } = await runScript(ip, script);
-  if (code !== 0) throw new Error(`couldn't set up API keys on the VM: ${stderr || `exit ${code}`}`);
+  const { code, stderr } = await runScript(ip, script, { timeoutMs: 3 * 60_000 });
+  if (code !== 0) throw new Error(`couldn't set up keys on the VM: ${stderr.split("\n").at(-1) || `exit ${code}`}`);
   return true;
+}
+
+/** The commit author from the local git config, or null if it isn't set. */
+export function localGitIdentity(): GitIdentity | null {
+  const get = (key: string) => spawnSync("git", ["config", "--get", key], { encoding: "utf8" }).stdout?.trim();
+  const name = get("user.name");
+  const email = get("user.email");
+  return name && email ? { name, email } : null;
+}
+
+/** Clones GitHub repos into the VM's home directory, skipping ones already there. */
+export async function cloneRepos(ip: string, repos: { repo: RepoRef; dir?: string }[]): Promise<CloneResult[]> {
+  if (repos.length === 0) return [];
+  const { code, stdout, stderr } = await runScript(ip, cloneScript(repos), { timeoutMs: 15 * 60_000 });
+  if (code !== 0) throw new Error(`couldn't clone repos: ${stderr.split("\n").at(-1) || `exit ${code}`}`);
+  return parseCloneOutput(stdout);
 }
 
 /** Joins the VM to the user's tailnet with the auth key from .env. Returns its tailnet name. */
@@ -121,6 +162,13 @@ export function installDesktop(ip: string): Promise<number> {
     child.on("error", () => resolve(1));
     child.stdin.end(desktopInstallScript());
   });
+}
+
+/** Removes the desktop from a VM to free its RAM and disk. */
+export async function uninstallDesktop(ip: string): Promise<void> {
+  const { code, stderr } = await runScript(ip, DESKTOP_UNINSTALL_SCRIPT, { timeoutMs: 10 * 60_000 });
+  if (code === 3) throw new Error("this VM has no desktop");
+  if (code !== 0) throw new Error(`couldn't remove the desktop: ${stderr.split("\n").at(-1) || `exit ${code}`}`);
 }
 
 /** The VM's desktop password, or null if it has no desktop. */
@@ -201,22 +249,78 @@ export async function stopServingDesktop(ip: string): Promise<void> {
   if (code !== 0) throw new Error(`couldn't stop serving the desktop: ${stderr || `exit ${code}`}`);
 }
 
+/** What's on the VM: setup state, tool versions, desktop, tailnet, GitHub, repos. */
+export async function vmInfo(ip: string): Promise<VmInfo> {
+  const { code, stdout, stderr } = await runScript(ip, VM_INFO_SCRIPT, { timeoutMs: 30_000 });
+  if (code !== 0) throw new Error(stderr.split("\n").at(-1) || `couldn't reach the VM (exit ${code})`);
+  return parseVmInfo(stdout);
+}
+
+/**
+ * Streams live metrics from the VM over one long-lived SSH connection until
+ * stopped, reconnecting with backoff if it drops. onStatus reports
+ * "connecting" / "live" / "reconnecting".
+ */
+export function streamMetrics(
+  ip: string,
+  onSample: (sample: MetricsSample) => void,
+  onStatus: (status: "connecting" | "live" | "reconnecting") => void = () => {},
+): () => void {
+  let stopped = false;
+  let child: ChildProcess | null = null;
+  let timer: NodeJS.Timeout | null = null;
+  let failures = 0;
+
+  const start = () => {
+    if (stopped) return;
+    onStatus(failures === 0 ? "connecting" : "reconnecting");
+    const parser = new MetricsParser((sample) => {
+      failures = 0;
+      onStatus("live");
+      onSample(sample);
+    });
+    const current = spawn("ssh", [...sshArgs(ip, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10"]), "sh -s"], {
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    child = current;
+    current.stdout!.setEncoding("utf8").on("data", (chunk: string) => parser.feed(chunk));
+    current.on("exit", () => {
+      if (stopped) return;
+      failures++;
+      timer = setTimeout(start, Math.min(30_000, 1_000 * 2 ** failures));
+    });
+    current.on("error", () => {});
+    // sh parses the whole loop before running it, so stdin can close now.
+    current.stdin!.end(METRICS_COLLECTOR);
+  };
+  start();
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    child?.kill();
+  };
+}
+
 /** Opens a URL in the user's browser. Best effort. */
 export function openInBrowser(url: string): void {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
   spawn(command, [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
 }
 
-// Runs on the VM once cloud-init is idle. Trusts bootstrap.sh's markers, not
-// cloud-init's status, which reads "done" after a reboot even if setup failed.
-// Exit codes: 0 ready, 1 failed (prints the failed step), 100 reboot pending.
+// Trusts bootstrap.sh's markers, not cloud-init's status, which reads "done"
+// after a reboot even if setup failed. Exit codes: 0 ready, 1 failed (prints
+// the failed step), 100 reboot pending, 101 still running (prints the phase).
 const SETUP_CHECK = [
-  "cloud-init status --wait >/dev/null 2>&1",
-  "if [ -f /var/lib/agent-vm/failed ]; then cat /var/lib/agent-vm/failed; exit 1; fi",
-  "if [ ! -f /var/lib/agent-vm/ready ]; then echo 'setup did not run'; exit 1; fi",
+  "state=/var/lib/agent-vm",
+  "case \"$(cloud-init status 2>/dev/null)\" in *running*|*'not started'*)",
+  "  if [ -f $state/phase ]; then cat $state/phase; elif [ -f $state/ready ]; then echo 'finishing up'; else echo 'updating packages'; fi",
+  "  exit 101;; esac",
+  "if [ -f $state/failed ]; then cat $state/failed; exit 1; fi",
+  "if [ ! -f $state/ready ]; then echo 'setup did not run'; exit 1; fi",
   "if [ -f /var/run/reboot-required ]; then exit 100; fi",
   "exit 0",
-].join("; ");
+].join("\n");
 
 function capture(args: string[]): Promise<{ code: number; stdout: string }> {
   return new Promise((resolve) => {
@@ -229,21 +333,30 @@ function capture(args: string[]): Promise<{ code: number; stdout: string }> {
 }
 
 // Waits for sshd to come up, then until setup finishes on the VM, including
-// the post-setup reboot if there is one.
-export async function waitForCloudInit(ip: string, timeoutMs = 20 * 60_000): Promise<void> {
+// the post-setup reboot if there is one. Reports setup's current phase
+// ("adding Claude Code", "rebooting") through onPhase.
+export async function waitForCloudInit(
+  ip: string,
+  { timeoutMs = 20 * 60_000, onPhase = (_phase: string) => {} } = {},
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let booted = false;
   while (Date.now() < deadline) {
     const { code, stdout } = await capture([
       ...sshArgs(ip, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]),
       SETUP_CHECK,
     ]);
-    // 255 = ssh could not connect (booting or rebooting); 100 = reboot pending.
     if (code === 0) return;
-    if (code !== 255 && code !== 100) {
+    // 255 = ssh could not connect (booting or rebooting); 100 = reboot pending.
+    if (code === 255) onPhase(booted ? "rebooting" : "booting");
+    else if (code === 100) onPhase("rebooting");
+    else if (code === 101) onPhase(stdout || "installing tools");
+    else {
       throw new Error(
         `setup failed at "${stdout || "unknown step"}"; see /var/log/cloud-init-output.log on the VM`,
       );
     }
+    if (code !== 255) booted = true;
     await new Promise((resolve) => setTimeout(resolve, 5_000));
   }
   throw new Error("timed out waiting for setup to finish");

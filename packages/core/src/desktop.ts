@@ -44,3 +44,25 @@ echo "https://$(jq -r '.Self.DNSName' <<<"$status" | sed 's/\\.$//')"
 
 /** Stops serving the desktop to the tailnet. */
 export const DESKTOP_PHONE_OFF_SCRIPT = "sudo tailscale serve --https=443 off\n";
+
+/**
+ * Removes the desktop to free RAM and disk: the service, KasmVNC, XFCE and
+ * Firefox, and stops serving it to the tailnet. Exits 3 if there's no
+ * desktop. Run as the agent user.
+ */
+export const DESKTOP_UNINSTALL_SCRIPT = `
+set -euo pipefail
+test -f /etc/systemd/system/agent-vm-desktop.service || exit 3
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
+if command -v tailscale >/dev/null && sudo tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${DESKTOP_PORT}"; then
+  sudo tailscale serve --https=443 off || true
+fi
+sudo systemctl disable --now agent-vm-desktop.service
+sudo rm -f /etc/systemd/system/agent-vm-desktop.service
+sudo systemctl daemon-reload
+sudo apt-get purge -y -q kasmvncserver xfce4 xfce4-terminal xfce4-notifyd dbus-x11 firefox >/dev/null
+sudo apt-get autoremove --purge -y -q >/dev/null
+sudo rm -rf /etc/apt/sources.list.d/mozilla.list /etc/apt/preferences.d/mozilla /etc/apt/keyrings/packages.mozilla.org.asc /etc/firefox/policies
+sudo gpasswd -d ${DESKTOP_USER} ssl-cert >/dev/null || true
+rm -rf ~/.vnc ~/.kasmpasswd ~/.config/agent-vm/desktop-password
+`;

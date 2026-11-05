@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
 import {
+  DEFAULT_AUTOSLEEP_MINUTES,
   DESKTOP_USER,
+  IDLE_CHECK_MS,
+  formatMinutes,
   formatCost,
   formatRate,
   hourlyRate,
@@ -12,25 +15,40 @@ import {
   newVmName,
   SIGN_IN_SCRIPT,
   type AgentKeys,
+  type AgentVms,
   type Fleet,
+  type FleetSnapshot,
   type FleetVm,
+  type SignInMode,
+  type Vm,
 } from "@agent-platform/core";
-import { saveCurrentProject, saveLaunchPrefs, type LaunchPrefs } from "../prefs";
+import { afterSetup } from "../after-setup";
+import { AutoSleeper } from "../autosleep";
+import {
+  loadAutosleep,
+  loadProjectRepos,
+  saveAutosleep,
+  saveCurrentProject,
+  saveLaunchPrefs,
+  saveProjectRepos,
+  type LaunchPrefs,
+} from "../prefs";
 import {
   desktopPassword,
   forgetHostKey,
-  installKeys,
-  joinTailnet,
   leaveTailnet,
   openDesktopTunnel,
   openInBrowser,
   openShell,
+  openTmux,
   runInteractive,
   waitForCloudInit,
 } from "../ssh";
+import { Detail } from "./detail";
 import { Key } from "./key";
 import { LaunchForm } from "./launch-form";
 import { ProjectPicker } from "./project-picker";
+import { SnapshotList } from "./snapshots";
 
 type Phase = "creating" | "booting" | "installing" | "ready" | "failed";
 
@@ -42,6 +60,8 @@ interface Job {
   region: string;
   project: string | null;
   vmId?: string;
+  /** Setup's current phase on the VM, e.g. "adding Claude Code". */
+  step?: string;
 }
 
 interface Row {
@@ -53,6 +73,8 @@ interface Row {
   deleting: boolean;
   /** Sleep/wake step in progress. */
   busy?: string;
+  /** Minutes of idleness before auto-sleep, if on. */
+  autosleep?: number;
 }
 
 type Message = { text: string; tone: "info" | "success" | "error" } | null;
@@ -66,6 +88,7 @@ export interface AppProps {
 }
 
 const REFRESH_MS = 10_000;
+const SNAPSHOT_REFRESH_MS = 30_000;
 // Costs are computed locally from list prices, so they can tick between refreshes.
 const COST_TICK_MS = 5_000;
 
@@ -83,6 +106,7 @@ function age(iso: string): string {
 export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projects: initialProjects }: AppProps) {
   const { exit, suspendTerminal } = useApp();
   const [list, setList] = useState<FleetVm[] | null>(null);
+  const [autosleep, setAutosleep] = useState(loadAutosleep);
   const [jobs, setJobs] = useState<Record<string, Job>>({});
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState(0);
@@ -97,6 +121,12 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   const [project, setProject] = useState(initialProjects.current);
   const [savedProjects, setSavedProjects] = useState(initialProjects.projects);
   const [pickingProject, setPickingProject] = useState(false);
+  const [view, setView] = useState<"vms" | "snapshots">("vms");
+  const [snapshots, setSnapshots] = useState<FleetSnapshot[] | null>(null);
+  const [deletingSnapshots, setDeletingSnapshots] = useState<Set<string>>(new Set());
+  const [confirmSnapshot, setConfirmSnapshot] = useState<Row | null>(null);
+  // The VM (by name: waking changes its id) whose detail view is open.
+  const [detailName, setDetailName] = useState<string | null>(null);
   const summary = [
     fleet.clouds.map((c) => c.label).join(" + "),
     `next: ${fleet.cloud(launchPrefs.provider).label} ${launchPrefs.region} ${launchPrefs.size}`,
@@ -130,8 +160,29 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     return () => clearInterval(timer);
   }, [refresh]);
 
+  // Only while the Snapshots view is open, and less often than VMs.
+  const refreshSnapshots = useCallback(async () => {
+    try {
+      const { snapshots: list, errors } = await fleet.listSnapshots();
+      setSnapshots(list.filter((s) => project === null || s.project === project));
+      if (errors.length > 0) {
+        setMessage({ text: `Couldn't list some snapshots. ${errors.map((e) => `${e.provider}: ${e.message}`).join("; ")}`, tone: "error" });
+      }
+    } catch (err) {
+      setSnapshots((current) => current ?? []);
+      setMessage({ text: errorText(err), tone: "error" });
+    }
+  }, [fleet, project]);
+
+  useEffect(() => {
+    if (view !== "snapshots") return;
+    void refreshSnapshots();
+    const timer = setInterval(refreshSnapshots, SNAPSHOT_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [view, refreshSnapshots]);
+
   const updateJob = (name: string, patch: Partial<Job>) =>
-    setJobs((current) => ({ ...current, [name]: { ...current[name], name, phase: "creating", ...patch } as Job }));
+    setJobs((current) => ({ ...current, [name]: { name, phase: "creating", ...current[name], ...patch } as Job }));
 
   const inProject = (p: string | null) => project === null || p === project;
   // Newly launched VMs show up before the provider lists them.
@@ -150,12 +201,53 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       job: jobs[vm.name],
       deleting: deleting.has(vm.id),
       busy: busy[vm.name],
+      autosleep: autosleep[vm.name],
     })),
   ];
   const current = Math.min(selected, rows.length - 1);
+  // Gone (deleted elsewhere) closes the detail view.
+  const detailRow = detailName ? rows.find((r) => r.name === detailName && r.vm) : undefined;
 
   const setStep = (name: string, step: string | null) =>
     setBusy(({ [name]: _, ...rest }) => (step ? { ...rest, [name]: step } : rest));
+
+  // Auto-sleep runs while the TUI is open, on VMs nothing else is doing.
+  const latest = useRef({ list, busy, autosleep });
+  latest.current = { list, busy, autosleep };
+  useEffect(() => {
+    const sleeper = new AutoSleeper(fleet, (event) => {
+      if (event.kind === "sleeping") setStep(event.vm, "auto-sleeping");
+      if (event.kind === "slept") {
+        setStep(event.vm, null);
+        setMessage({ text: `${event.vm} was idle, so it's asleep now. Press w to wake it.`, tone: "info" });
+        void refresh();
+      }
+      if (event.kind === "error" && latest.current.busy[event.vm] === "auto-sleeping") {
+        setStep(event.vm, null);
+        setMessage({ text: `Couldn't auto-sleep ${event.vm}: ${event.message}`, tone: "error" });
+      }
+    });
+    const timer = setInterval(() => {
+      const { list: vms, busy: inProgress, autosleep: limits } = latest.current;
+      if (vms && Object.keys(limits).length > 0) void sleeper.check(vms.filter((vm) => !inProgress[vm.name]), limits);
+    }, IDLE_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [fleet, refresh]);
+
+  function toggleAutosleep(row: Row) {
+    const vm = row.vm!;
+    const minutes = row.autosleep ? null : DEFAULT_AUTOSLEEP_MINUTES;
+    saveAutosleep(vm.name, minutes);
+    setAutosleep(loadAutosleep());
+    setMessage(
+      minutes
+        ? {
+            text: `${vm.name} sleeps after ${formatMinutes(minutes)} idle (no SSH session, desktop viewer, agent tool, program in tmux or busy CPU), while this TUI is open. Change the time with: pnpm cli autosleep ${vm.name} 2h`,
+            tone: "info",
+          }
+        : { text: `${vm.name} won't auto-sleep.`, tone: "info" },
+    );
+  }
 
   async function sleepVm(row: Row) {
     const vm = row.vm!;
@@ -207,7 +299,44 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     for (let i = 0; i < count; i++) void launchOne(choice);
   }
 
-  async function launchOne(choice: LaunchPrefs) {
+  function launchOne(choice: LaunchPrefs) {
+    return track({
+      provider: choice.provider,
+      region: choice.region,
+      project,
+      create: (vms, sshPublicKey, name) => vms.launch({ sshPublicKey, name, project: project ?? undefined, ...choice }),
+      after: { mode: choice.signIn, tailscale: choice.tailscale },
+      desktop: choice.desktop,
+    });
+  }
+
+  // A copy of a snapshot, into the current project (else the snapshot's).
+  function launchSnapshot(snapshot: FleetSnapshot) {
+    const into = project ?? snapshot.project;
+    setView("vms");
+    setSelected(0);
+    setMessage(null);
+    return track({
+      provider: snapshot.provider,
+      region: snapshot.regions[0] ?? "",
+      project: into,
+      create: (vms, sshPublicKey, name) =>
+        vms.launchFromSnapshot(snapshot, { sshPublicKey, name, project: into ?? undefined }),
+      // Its tools are already signed in (or not) on the snapshot's disk.
+      after: { mode: "subscription", tailscale: "if-installed" },
+      desktop: false,
+    });
+  }
+
+  // Launches one VM and follows it through setup in its row.
+  async function track(launch: {
+    provider: string;
+    region: string;
+    project: string | null;
+    create: (vms: AgentVms, sshPublicKey: string, name: string) => Promise<Vm>;
+    after: { mode: SignInMode; tailscale: boolean | "if-installed" };
+    desktop: boolean;
+  }) {
     let sshPublicKey: string;
     try {
       sshPublicKey = readFileSync(sshKeyPath, "utf8");
@@ -217,61 +346,99 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     }
 
     const name = newVmName();
-    updateJob(name, { phase: "creating", provider: choice.provider, region: choice.region, project });
+    updateJob(name, { phase: "creating", provider: launch.provider, region: launch.region, project: launch.project });
     try {
-      const { vms } = fleet.cloud(choice.provider);
-      const created = await vms.launch({ sshPublicKey, name, project: project ?? undefined, ...choice });
+      const { vms } = fleet.cloud(launch.provider);
+      const created = await launch.create(vms, sshPublicKey, name);
       updateJob(name, { phase: "booting", vmId: created.id });
       void refresh();
       const vm = await vms.waitForRunning(created.id);
+      // A new IP may have belonged to another machine before.
+      forgetHostKey(vm.publicIp!);
       updateJob(name, { phase: "installing" });
       void refresh();
-      await waitForCloudInit(vm.publicIp!);
-      updateJob(name, { phase: "ready" });
+      await waitForCloudInit(vm.publicIp!, { onPhase: (step) => updateJob(name, { step }) });
+      updateJob(name, { step: "finishing up" });
+      const { tailnetName, cloned, problems } = await afterSetup(vm.publicIp!, {
+        name,
+        keys,
+        repos: loadProjectRepos(launch.project),
+        ...launch.after,
+      });
+      updateJob(name, { phase: "ready", step: undefined });
       // Problems after setup leave a working VM; each has a command to retry it.
-      const problems: string[] = [];
-      let tailnetName: string | null = null;
-      if (choice.tailscale && keys.tailscale) {
-        try {
-          tailnetName = await joinTailnet(vm.publicIp!, keys.tailscale, name);
-        } catch (err) {
-          problems.push(`${errorText(err)} (retry: pnpm cli tailscale ${name})`);
-        }
-      }
-      if (choice.signIn === "api-keys") {
-        try {
-          await installKeys(vm.publicIp!, keys);
-        } catch (err) {
-          problems.push(`${errorText(err)} (retry: pnpm cli keys ${name})`);
-        }
-      }
       if (problems.length > 0) {
         setMessage({ text: `${name} is ready, but ${problems.join("; ")}`, tone: "error" });
         return;
       }
+      const newClones = cloned.filter((c) => c.status === "ok");
       const next = [
-        choice.signIn === "subscription" || (choice.tailscale && !keys.tailscale)
+        newClones.length > 0 ? `Cloned ${newClones.length === 1 ? newClones[0]!.repo : `${newClones.length} repos`}` : null,
+        launch.after.mode === "subscription" || (launch.after.tailscale === true && !keys.tailscale)
           ? "Select it and press l to sign in"
           : "Select it and press enter to connect",
-        choice.desktop ? "Press g to open its desktop" : null,
+        launch.desktop ? "Press g to open its desktop" : null,
         tailnetName ? `On your phone: ssh agent@${tailnetName}` : null,
       ];
       setMessage({ text: `${name} is ready. ${next.filter(Boolean).join(". ")}.`, tone: "success" });
     } catch (err) {
-      updateJob(name, { phase: "failed" });
+      updateJob(name, { phase: "failed", step: undefined });
       setMessage({ text: `${name}: ${errorText(err)}`, tone: "error" });
     }
   }
 
-  async function connect(row: Row) {
+  async function snapshotVm(row: Row) {
+    const vm = row.vm!;
+    setStep(vm.name, "snapshotting");
+    try {
+      const snapshot = await fleet.cloud(vm.provider).vms.snapshot(vm, { onStep: (step) => setStep(vm.name, step) });
+      if (vm.publicIp) {
+        setStep(vm.name, "starting up");
+        await waitForCloudInit(vm.publicIp);
+      }
+      setMessage({ text: `Saved ${snapshot.name} (${snapshot.sizeGb} GB). Press tab to see snapshots and launch copies.`, tone: "success" });
+      void refreshSnapshots();
+    } catch (err) {
+      setMessage({ text: `Couldn't snapshot ${vm.name}: ${errorText(err)}`, tone: "error" });
+    } finally {
+      setStep(vm.name, null);
+      void refresh();
+    }
+  }
+
+  async function deleteSnapshot(snapshot: FleetSnapshot) {
+    setDeletingSnapshots((current) => new Set(current).add(snapshot.id));
+    try {
+      await fleet.cloud(snapshot.provider).vms.provider.deleteSnapshot!(snapshot.id);
+      setMessage({ text: `Deleted snapshot ${snapshot.name}.`, tone: "info" });
+    } catch (err) {
+      setMessage({ text: `Couldn't delete ${snapshot.name}: ${errorText(err)}`, tone: "error" });
+    } finally {
+      await refreshSnapshots();
+      setDeletingSnapshots((current) => {
+        const next = new Set(current);
+        next.delete(snapshot.id);
+        return next;
+      });
+    }
+  }
+
+  async function connect(row: Row, { tmux = false } = {}) {
     const ip = row.vm?.publicIp;
     if (!ip) {
       setMessage({ text: `${row.name} has no IP address yet.`, tone: "info" });
       return;
     }
     await suspendTerminal(async () => {
-      process.stdout.write(`Connecting to ${row.name} (${ip}). Type "exit" to come back.\n`);
-      await openShell(ip);
+      if (tmux) {
+        process.stdout.write(
+          `Attaching to ${row.name}'s tmux session. Press Ctrl+B then D to come back; programs keep running.\n`,
+        );
+        await openTmux(ip);
+      } else {
+        process.stdout.write(`Connecting to ${row.name} (${ip}). Type "exit" to come back.\n`);
+        await openShell(ip);
+      }
     });
     void refresh();
   }
@@ -356,6 +523,15 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       setConfirmSleep(null);
       return;
     }
+    if (confirmSnapshot) {
+      if (input.toLowerCase() === "y") void snapshotVm(confirmSnapshot);
+      setConfirmSnapshot(null);
+      return;
+    }
+    if (key.tab) {
+      setMessage(null);
+      return setView("snapshots");
+    }
 
     if (input === "q" || key.escape) return exit();
     if (input === "n") return setPicking(true);
@@ -371,10 +547,16 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     if (!row) return;
     if (row.busy) return setMessage({ text: `${row.name} is ${row.busy}…`, tone: "info" });
     const asleep = row.vm?.status === "asleep";
-    if (asleep && (key.return || input === "l" || input === "g")) {
+    if (asleep && (key.return || input === "l" || input === "g" || input === "t")) {
       return setMessage({ text: `${row.name} is asleep. Press w to wake it.`, tone: "info" });
     }
+    if (key.rightArrow || input === "i") {
+      if (!row.vm) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
+      setMessage(null);
+      return setDetailName(row.name);
+    }
     if (key.return) return void connect(row);
+    if (input === "t") return void connect(row, { tmux: true });
     if (input === "l") return void signIn(row);
     if (input === "g") return void openDesktop(row);
     if (input === "w") {
@@ -388,11 +570,25 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       }
       return setConfirmSleep(row);
     }
+    if (input === "a") {
+      if (!row.vm || row.vm.status === "asleep") return setMessage({ text: `Auto-sleep is for running VMs.`, tone: "info" });
+      if (!fleet.cloud(row.vm.provider).vms.provider.sleepKind) {
+        return setMessage({ text: `Sleep isn't supported on ${providerLabels[row.vm.provider]} yet.`, tone: "info" });
+      }
+      return toggleAutosleep(row);
+    }
+    if (input === "b") {
+      if (row.vm?.status !== "running") return setMessage({ text: `Only running VMs can be snapshotted.`, tone: "info" });
+      if (!fleet.cloud(row.vm.provider).vms.provider.snapshotVm) {
+        return setMessage({ text: `Snapshots aren't supported on ${providerLabels[row.vm.provider]} yet.`, tone: "info" });
+      }
+      return setConfirmSnapshot(row);
+    }
     if (input === "d") {
       if (!row.id) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
       if (!row.deleting) setConfirmDelete(row);
     }
-  }, { isActive: !picking && !pickingProject });
+  }, { isActive: !picking && !pickingProject && !detailRow && view === "vms" });
 
   const header = (
     <Box flexDirection="column" marginBottom={1}>
@@ -431,8 +627,63 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
             setSavedProjects((current) => [...new Set([...current, name])]);
             choose(name);
           }}
+          repos={loadProjectRepos}
+          onSaveRepos={(name, repos) => {
+            saveProjectRepos(name, repos);
+            setSavedProjects((current) => [...new Set([...current, name])]);
+          }}
           onCancel={() => setPickingProject(false)}
         />
+      </Box>
+    );
+  }
+
+  if (view === "snapshots") {
+    return (
+      <Box flexDirection="column" paddingX={1} paddingY={1}>
+        {header}
+        <SnapshotList
+          snapshots={snapshots}
+          providerLabels={providerLabels}
+          deleting={deletingSnapshots}
+          onLaunch={(snapshot) => void launchSnapshot(snapshot)}
+          onDelete={(snapshot) => void deleteSnapshot(snapshot)}
+          onRefresh={() => void refreshSnapshots()}
+          onBack={() => setView("vms")}
+          onQuit={exit}
+        />
+        {message ? (
+          <Box marginTop={1}>
+            <Text color={message.tone === "error" ? "red" : message.tone === "success" ? "green" : undefined}>
+              {message.text}
+            </Text>
+          </Box>
+        ) : null}
+      </Box>
+    );
+  }
+
+  if (detailRow) {
+    return (
+      <Box flexDirection="column" paddingX={1} paddingY={1}>
+        <Detail
+          key={detailRow.vm!.id}
+          vm={detailRow.vm!}
+          providerLabel={providerLabels[detailRow.vm!.provider] ?? detailRow.vm!.provider}
+          now={now}
+          onBack={() => setDetailName(null)}
+          onConnect={() => void connect(detailRow)}
+          onTmux={() => void connect(detailRow, { tmux: true })}
+          onSignIn={() => void signIn(detailRow)}
+          onDesktop={() => void openDesktop(detailRow)}
+        />
+        {message ? (
+          <Box marginTop={1}>
+            <Text color={message.tone === "error" ? "red" : message.tone === "success" ? "green" : undefined}>
+              {message.text}
+            </Text>
+          </Box>
+        ) : null}
       </Box>
     );
   }
@@ -479,6 +730,12 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
           <Text color="yellow">
             Delete {confirmDelete.name}? This destroys the VM and everything on it. <Text bold>y/N</Text>
           </Text>
+        ) : confirmSnapshot ? (
+          <Text color="yellow">
+            Snapshot {confirmSnapshot.name}? It shuts down for a few minutes while its disk is copied, then starts
+            again. The snapshot includes everything on the disk, including signed-in credentials; storage is about
+            $0.06/GB/month. <Text bold>y/N</Text>
+          </Text>
         ) : confirmSleep ? (
           <SleepConfirm vm={confirmSleep.vm!} kind={fleet.cloud(confirmSleep.vm!.provider).vms.provider.sleepKind!} />
         ) : message ? (
@@ -491,16 +748,20 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         )}
       </Box>
 
-      <Box marginTop={1} gap={2}>
+      <Box marginTop={1} columnGap={2} flexWrap="wrap">
         <Key k="n" label="new" />
         <Key k="⏎" label="connect" />
+        <Key k="t" label="tmux" />
+        <Key k="i" label="details" />
         <Key k="l" label="sign in" />
         <Key k="g" label="desktop" />
         <Key k="s" label="sleep" />
         <Key k="w" label="wake" />
+        <Key k="a" label="auto-sleep" />
+        <Key k="b" label="snapshot" />
         <Key k="d" label="delete" />
         <Key k="p" label="project" />
-        <Key k="r" label="refresh" />
+        <Key k="tab" label="snapshots" />
         <Key k="q" label="quit" />
       </Box>
     </Box>
@@ -508,7 +769,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
 }
 
 // Fits 110 columns with the project column (all-projects view).
-const COLUMNS = { name: 16, project: 11, status: 18, ip: 16, cloud: 13, region: 10, rate: 8, cost: 11 };
+const COLUMNS = { name: 16, project: 10, status: 20, ip: 16, cloud: 13, region: 10, rate: 7, cost: 11 };
 
 // Total rate and month-to-date cost of the listed VMs, from list prices.
 function CostSummary({ vms, now }: { vms: FleetVm[]; now: Date }) {
@@ -628,11 +889,22 @@ function SleepConfirm({ vm, kind }: { vm: FleetVm; kind: "snapshot" | "stop" }) 
   );
 }
 
+// A spinner whose label is cut to the column instead of wrapping.
+function Busy({ label }: { label: string }) {
+  return (
+    <Box gap={1}>
+      <Spinner />
+      <Text wrap="truncate-end">{label}</Text>
+    </Box>
+  );
+}
+
 function StatusCell({ row }: { row: Row }) {
   if (row.deleting) return <Spinner label="deleting" />;
   if (row.busy) return <Spinner label={row.busy} />;
 
   const phase = row.job?.phase;
+  if (phase === "installing" && row.job?.step) return <Busy label={row.job.step} />;
   if (phase === "creating" || phase === "booting" || phase === "installing") {
     return <Spinner label={PHASE_LABELS[phase]} />;
   }
@@ -641,7 +913,12 @@ function StatusCell({ row }: { row: Row }) {
 
   switch (row.vm?.status) {
     case "running":
-      return <Text color="green">● running</Text>;
+      return (
+        <Text>
+          <Text color="green">● running</Text>
+          {row.autosleep ? <Text dimColor>{` ☾${formatMinutes(row.autosleep)}`}</Text> : null}
+        </Text>
+      );
     case "provisioning":
       return <Spinner label="starting" />;
     case "asleep":

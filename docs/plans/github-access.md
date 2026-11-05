@@ -1,6 +1,6 @@
 # GitHub Access from Agent VMs
 
-> Status: planned, not started. Last updated 2026-10-31.
+> Status: G1–G6 shipped (see [github.md](../github.md)), tested on a real VM with public repos and a rejected fake token. Not yet tested with a real fine-grained token (none in .env). Last updated 2026-11-05.
 > Builds on the sign-in modes and `.env` API keys in [agent-credentials.md](../agent-credentials.md) and on projects.
 
 ## 1. Goal
@@ -24,41 +24,41 @@ Not doing SSH agent forwarding by default: it doesn't serve unattended agents, a
 ## 3. Milestones
 
 ### G1: `gh` on every VM
-- [ ] Install GitHub's CLI (`gh`) in the cloud-init base setup from GitHub's apt repository (signed keyring in `/etc/apt/keyrings`, like Docker's).
-- [ ] Not an optional tool in the tools step: it's small and useful for every agent.
+- [x] Install GitHub's CLI (`gh`) in the cloud-init base setup from GitHub's apt repository (signed keyring in `/etc/apt/keyrings`, like Docker's).
+- [x] Not an optional tool in the tools step: it's small and useful for every agent.
 
 ### G2: Token from `.env` (API-key mode)
-- [ ] `.env.example`: `GITHUB_TOKEN=` with a short note on creating a fine-grained token (repos, Contents read/write, Pull requests read/write if agents should open PRs, an expiry).
-- [ ] `AgentKeys` gets `github?: string`; `agentKeysFromEnv` reads `GITHUB_TOKEN`.
-- [ ] `keySetupScript` adds, when a token is present:
+- [x] `.env.example`: `GITHUB_TOKEN=` with a short note on creating a fine-grained token (repos, Contents read/write, Pull requests read/write if agents should open PRs, an expiry).
+- [x] `AgentKeys` gets `github?: string`; `agentKeysFromEnv` reads `GITHUB_TOKEN`.
+- [x] `keySetupScript` adds, when a token is present:
   - write it to `~/.config/agent-vm/github-token` (mode 600),
   - `gh auth login --with-token < "$keys/github-token"`,
   - `gh auth setup-git`, so plain `git clone`/`push` over https use it and agents need nothing special.
-- [ ] Sent over SSH stdin like the other keys, never in cloud-init user data.
-- [ ] `pnpm cli keys <vm>` re-applies it (e.g. after rotating the token).
-- [ ] The launch form's sign-in step shows GitHub key status (✓ / not set) alongside the Anthropic and OpenAI keys.
+- [x] Sent over SSH stdin like the other keys, never in cloud-init user data.
+- [x] `pnpm cli keys <vm>` re-applies it (e.g. after rotating the token).
+- [x] The launch form's sign-in step shows GitHub key status (✓ / not set) alongside the Anthropic and OpenAI keys.
 
-Open question: install the token in subscription mode too? Probably yes: GitHub access is separate from the Claude/ChatGPT plan question, and a token isn't a subscription login. Decide when building; at minimum make it a clear choice in the sign-in step.
+Decided: the token is installed in both sign-in modes. GitHub access is separate from the Claude/ChatGPT plan question, and a token isn't a subscription login. The sign-in step shows whether GITHUB_TOKEN is set.
 
 ### G3: Commit identity
-- [ ] At launch, read `git config user.name` and `user.email` locally and set them on the VM (`git config --global`), so commits from the VM are attributed to the user.
-- [ ] If they aren't set locally, skip and print a hint.
-- [ ] Not a secret, but send it in the same SSH step for simplicity.
+- [x] At launch, read `git config user.name` and `user.email` locally and set them on the VM (`git config --global`), so commits from the VM are attributed to the user.
+- [x] If they aren't set locally, skip and print a hint.
+- [x] Not a secret, but send it in the same SSH step for simplicity.
 
 ### G4: Repos per project
-- [ ] A project can list repos (`owner/name`). Stored in the CLI prefs file with the project for now; later in the backend.
-- [ ] Every VM launched into that project clones them into `~/<name>` once setup and keys are done. Already-present directories are skipped (`git clone` only if missing), so it's safe to re-run.
-- [ ] TUI: in the project picker, a key to edit the selected project's repos (one per line).
-- [ ] CLI: `pnpm cli projects repos <project> [add|remove] owner/repo`.
-- [ ] Clone failures (no access, typo) don't fail the launch: show them on the VM row and in the command output.
+- [x] A project can list repos (`owner/name`). Stored in the CLI prefs file with the project for now; later in the backend.
+- [x] Every VM launched into that project clones them into `~/<name>` once setup and keys are done. Already-present directories are skipped (`git clone` only if missing), so it's safe to re-run.
+- [x] TUI: in the project picker, `e` edits the selected project's repos (space or comma separated).
+- [x] CLI: `pnpm cli repos <project> [add|remove] owner/repo`.
+- [x] Clone failures (no access, typo) don't fail the launch: shown in the TUI message and the command output, with the retry command.
 
 ### G5: Ad hoc clone
-- [ ] `pnpm cli clone <vm> owner/repo [dir]` clones into the VM's home directory.
-- [ ] Accepts `owner/repo`, an https URL or a `git@github.com:` URL (rewritten to https so the token works).
+- [x] `pnpm cli clone <vm> owner/repo [dir]` clones into the VM's home directory.
+- [x] Accepts `owner/repo`, an https URL or a `git@github.com:` URL (rewritten to https so the token works).
 
 ### G6: GitHub in "Sign in yourself"
-- [ ] `SIGN_IN_SCRIPT` gets a GitHub step: if `gh auth status` fails, run `gh auth login --hostname github.com --git-protocol https --web` (device code), then `gh auth setup-git`.
-- [ ] Skip if already signed in (e.g. a token was installed).
+- [x] `SIGN_IN_SCRIPT` gets a GitHub step: if `gh auth status` fails, ask, then run `gh auth login --hostname github.com --git-protocol https --web` (device code), then `gh auth setup-git`.
+- [x] Skip if already signed in (e.g. a token was installed).
 
 ## 4. Security notes (put in docs/agent-credentials.md when shipping)
 

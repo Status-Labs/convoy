@@ -1,6 +1,6 @@
 import { AgentVms } from "./agent-vms";
 import type { Config } from "./config";
-import type { ProviderDefaults, Vm } from "./types";
+import type { ProviderDefaults, Snapshot, Vm } from "./types";
 
 /** One enabled provider and its agent VMs. */
 export interface Cloud {
@@ -11,6 +11,10 @@ export interface Cloud {
 }
 
 export interface FleetVm extends Vm {
+  provider: string;
+}
+
+export interface FleetSnapshot extends Snapshot {
   provider: string;
 }
 
@@ -54,6 +58,27 @@ export class Fleet {
       else list.errors.push({ provider, message: (result.reason as Error).message });
     });
     return list;
+  }
+
+  /** Kept snapshots on every provider that supports them. */
+  async listSnapshots(): Promise<{ snapshots: FleetSnapshot[]; errors: { provider: string; message: string }[] }> {
+    const clouds = this.clouds.filter((c) => c.vms.provider.listSnapshots);
+    const results = await Promise.allSettled(clouds.map((c) => c.vms.provider.listSnapshots!()));
+    const list: { snapshots: FleetSnapshot[]; errors: { provider: string; message: string }[] } = { snapshots: [], errors: [] };
+    results.forEach((result, i) => {
+      const provider = clouds[i]!.name;
+      if (result.status === "fulfilled") list.snapshots.push(...result.value.map((s) => ({ ...s, provider })));
+      else list.errors.push({ provider, message: (result.reason as Error).message });
+    });
+    list.snapshots.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return list;
+  }
+
+  async findSnapshot(idOrName: string): Promise<{ snapshot: FleetSnapshot; cloud: Cloud }> {
+    const { snapshots } = await this.listSnapshots();
+    const snapshot = snapshots.find((s) => s.id === idOrName || s.name === idOrName);
+    if (!snapshot) throw new Error(`No snapshot with id or name "${idOrName}". See: pnpm cli snapshots`);
+    return { snapshot, cloud: this.cloud(snapshot.provider) };
   }
 
   async findVm(idOrName: string): Promise<{ vm: FleetVm; cloud: Cloud }> {

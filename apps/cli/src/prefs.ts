@@ -27,6 +27,10 @@ interface PrefsFile {
   // Projects created here, and the one the TUI shows (absent = all).
   projects?: string[];
   project?: string;
+  // GitHub repos (owner/name) cloned onto every VM launched into a project.
+  repos?: Record<string, string[]>;
+  // Minutes of idleness before auto-sleep, by VM name (names survive sleep/wake).
+  autosleep?: Record<string, number>;
   // Region and size slugs are provider-specific.
   providers?: Record<string, { region?: string; size?: string }>;
 }
@@ -92,5 +96,30 @@ export function saveCurrentProject(project: string | null): void {
   } else {
     delete prefs.project;
   }
+  writePrefs(prefs);
+}
+
+/** GitHub repos (owner/name) cloned onto VMs launched into this project. */
+export function loadProjectRepos(project: string | null): string[] {
+  return project ? (readPrefs().repos?.[project] ?? []) : [];
+}
+
+export function saveProjectRepos(project: string, repos: string[]): void {
+  const prefs = readPrefs();
+  const { [project]: _, ...rest } = prefs.repos ?? {};
+  prefs.repos = repos.length > 0 ? { ...rest, [project]: repos } : rest;
+  if (!prefs.projects?.includes(project)) prefs.projects = [...(prefs.projects ?? []), project];
+  writePrefs(prefs);
+}
+
+/** Auto-sleep settings: minutes of idleness by VM name. */
+export function loadAutosleep(): Record<string, number> {
+  return readPrefs().autosleep ?? {};
+}
+
+export function saveAutosleep(vmName: string, minutes: number | null): void {
+  const prefs = readPrefs();
+  const { [vmName]: _, ...rest } = prefs.autosleep ?? {};
+  prefs.autosleep = minutes === null ? rest : { ...rest, [vmName]: minutes };
   writePrefs(prefs);
 }

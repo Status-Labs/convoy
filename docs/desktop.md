@@ -8,6 +8,7 @@ The desktop listens on the VM's localhost only. You reach it through an SSH tunn
 
 - **New VM:** tick **Desktop** at the tools step in the TUI, or `pnpm cli create --desktop`. Setup takes a minute or two longer.
 - **Existing VM:** `pnpm cli desktop <vm> --install`.
+- **Remove it** to free RAM and disk: `pnpm cli desktop <vm> --uninstall` (removes KasmVNC, XFCE and Firefox, and stops serving it to your tailnet).
 
 Pick a size with at least **4 GB of RAM** (`s-2vcpu-4gb` on DigitalOcean). In testing, the desktop with Firefox open used about 1.1 GB, and agent browsers need room on top of that.
 

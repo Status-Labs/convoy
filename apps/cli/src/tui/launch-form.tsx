@@ -512,7 +512,8 @@ function SignInStep({ current, keys, onPick, onBack }: SignInStepProps) {
       })}
       <Box marginTop={1}>
         <Text dimColor>
-          .env keys: ANTHROPIC_API_KEY {keys.anthropic ? "✓" : "✗"} · OPENAI_API_KEY {keys.openai ? "✓" : "✗"}
+          .env keys: ANTHROPIC_API_KEY {keys.anthropic ? "✓" : "✗"} · OPENAI_API_KEY {keys.openai ? "✓" : "✗"} ·
+          GITHUB_TOKEN {keys.github ? "✓ (either way)" : "✗"}
         </Text>
       </Box>
       <Box marginTop={1} gap={2}>
@@ -645,7 +646,7 @@ function ToolStep({ initial, initialExtras, keys, mode, summary, ramGb, onLaunch
 
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>Always included: security updates, firewall (SSH only), fail2ban,</Text>
-        <Text dimColor>automatic security patches, git, Node.js, Python, tmux.</Text>
+        <Text dimColor>automatic security patches, git, GitHub CLI, Node.js, Python, tmux.</Text>
       </Box>
 
       <Box marginTop={1}>

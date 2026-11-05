@@ -1,3 +1,4 @@
+import { GITHUB_SIGN_IN, githubTokenLines, gitIdentityLines, type GitIdentity } from "./github";
 import { TAILSCALE_SIGN_IN } from "./tailscale";
 import { AGENT_TOOLS, type ToolId } from "./tools";
 
@@ -22,6 +23,11 @@ export interface AgentKeys {
   openai?: string;
   /** Tailscale auth key, used in either sign-in mode to join VMs to the tailnet. */
   tailscale?: string;
+  /**
+   * GitHub token (ideally fine-grained, limited to the repos agents need).
+   * Installed in either sign-in mode: it isn't a Claude or ChatGPT login.
+   */
+  github?: string;
 }
 
 export function agentKeysFromEnv(env: NodeJS.ProcessEnv = process.env): AgentKeys {
@@ -29,6 +35,7 @@ export function agentKeysFromEnv(env: NodeJS.ProcessEnv = process.env): AgentKey
     anthropic: env.ANTHROPIC_API_KEY?.trim() || undefined,
     openai: env.OPENAI_API_KEY?.trim() || undefined,
     tailscale: env.TAILSCALE_AUTH_KEY?.trim() || undefined,
+    github: env.GITHUB_TOKEN?.trim() || undefined,
   };
 }
 
@@ -71,12 +78,13 @@ function shellQuote(value: string): string {
 
 /**
  * Bash script that configures the agent tools installed on a VM with these
- * keys. It contains the keys, so run it with `bash -s` over SSH (stdin), never
- * as a command-line argument or in cloud-init user data. Returns null if there
- * are no keys.
+ * keys, signs gh and git in with the GitHub token, and sets the commit
+ * identity. It contains the keys, so run it with `bash -s` over SSH (stdin),
+ * never as a command-line argument or in cloud-init user data. Returns null if
+ * there's nothing to set up. Pass only the keys the sign-in mode allows.
  */
-export function keySetupScript(keys: AgentKeys): string | null {
-  if (!keys.anthropic && !keys.openai) return null;
+export function keySetupScript(keys: AgentKeys, identity?: GitIdentity | null): string | null {
+  if (!keys.anthropic && !keys.openai && !keys.github && !identity) return null;
   const lines = [
     "set -euo pipefail",
     "umask 077",
@@ -101,11 +109,19 @@ export function keySetupScript(keys: AgentKeys): string | null {
       'if command -v opencode >/dev/null; then json_set "$HOME/.config/opencode/opencode.json" \'.provider.openai.options.apiKey = "{file:~/.config/agent-vm/openai-api-key}"\'; fi',
     );
   }
+  // Identity first: it can't fail, and a rejected token shouldn't skip it.
+  if (identity) lines.push(...gitIdentityLines(identity));
+  if (keys.github) lines.push(...githubTokenLines(keys.github));
   return lines.join("\n") + "\n";
 }
 
+/** The keys a sign-in mode installs: API keys only in api-keys mode, GitHub in both. */
+export function keysForMode(keys: AgentKeys, mode: SignInMode): AgentKeys {
+  return mode === "api-keys" ? keys : { github: keys.github };
+}
+
 /**
- * Interactive script that signs in Claude Code, Codex and Tailscale on a VM
+ * Interactive script that signs in Claude Code, Codex, GitHub and Tailscale on a VM
  * through each vendor's own login flow, skipping tools that are already signed in. Run it
  * in a terminal over `ssh -t`. Holds no secrets.
  */
@@ -131,6 +147,7 @@ fi
 if command -v opencode >/dev/null; then
   echo; echo "OpenCode: add a provider on the VM with: opencode auth login"
 fi
+${GITHUB_SIGN_IN}
 ${TAILSCALE_SIGN_IN}
 echo; read -rp "Press enter to go back. " _
 `;

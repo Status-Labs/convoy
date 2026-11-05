@@ -14,6 +14,17 @@ export interface Vm {
   project: string | null;
   /** List prices for this VM, or null when the provider doesn't say. */
   pricing: VmPricing | null;
+  /** Size details, when the provider includes them in its VM listing. */
+  spec?: VmSpec;
+}
+
+export interface VmSpec {
+  size: string;
+  vcpus?: number;
+  ramGb?: number;
+  diskGb?: number;
+  /** The image it was created from, e.g. "Ubuntu 24.04 (LTS) x64". */
+  image?: string;
 }
 
 /** Prices in USD. Used to estimate cost; see cost.ts. */
@@ -79,6 +90,33 @@ export interface VmProvider {
   wakeVm?(id: string, userData: string): Promise<Vm>;
   /** Cleans up after a woken VM is running (e.g. deletes the sleep snapshot). */
   finishWake?(asleepId: string): Promise<void>;
+
+  /**
+   * Snapshots a VM and keeps it. Safe (the default) shuts it down first for a
+   * consistent disk and starts it again after; live snapshots it running.
+   */
+  snapshotVm?(id: string, options: { name: string; live?: boolean; onStep?: (step: string) => void }): Promise<Snapshot>;
+  listSnapshots?(): Promise<Snapshot[]>;
+  deleteSnapshot?(id: string): Promise<void>;
+}
+
+/** A saved copy of a VM's disk that new VMs can be launched from. */
+export interface Snapshot {
+  id: string;
+  name: string;
+  /** Name of the VM it was taken from. */
+  sourceVm: string | null;
+  project: string | null;
+  /** Size of the source VM; the default for VMs launched from it. */
+  size: string | null;
+  regions: string[];
+  /** Data stored, in GB (what storage is billed on). */
+  sizeGb: number;
+  /** Smallest disk a VM launched from it can have. */
+  minDiskGb: number;
+  createdAt: string;
+  /** Storage cost per month, USD, or null when unknown. */
+  monthly: number | null;
 }
 
 /** The region, size and image new VMs get unless the user picks others. */

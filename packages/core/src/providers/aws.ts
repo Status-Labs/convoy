@@ -156,6 +156,7 @@ function toVm(instance: Instance, region: string, pricing: VmPricing | null): Vm
     createdAt: instance.LaunchTime?.toISOString() ?? new Date().toISOString(),
     project: instance.Tags?.find((t) => t.Key === PROJECT_TAG)?.Value ?? null,
     pricing,
+    spec: instance.InstanceType ? { size: instance.InstanceType } : undefined,
   };
 }
 

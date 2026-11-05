@@ -18,12 +18,23 @@ import {
   formatRate,
   hourlyRate,
   monthToDateCost,
+  DEFAULT_AUTOSLEEP_MINUTES,
+  IDLE_CHECK_MS,
+  formatMinutes,
+  parseIdleMinutes,
+  parseRepo,
   parseToolIds,
+  repoSlug,
+  type AgentKeys,
   type Cloud,
   type SignInMode,
 } from "@agent-platform/core";
 import QRCode from "qrcode";
+import { afterSetup } from "./after-setup";
+import { AutoSleeper } from "./autosleep";
+import { loadAutosleep, loadProjectPrefs, loadProjectRepos, saveAutosleep, saveProjectRepos } from "./prefs";
 import {
+  cloneRepos,
   desktopPassword,
   forgetHostKey,
   installDesktop,
@@ -35,7 +46,10 @@ import {
   installKeys,
   joinTailnet,
   leaveTailnet,
+  localGitIdentity,
+  uninstallDesktop,
   openShell,
+  openTmux,
   runInteractive,
   runRemote,
   sshCommand,
@@ -120,11 +134,13 @@ program
   .option("--api-keys", "set up tools with the API keys in .env (default: sign in yourself with `login`)")
   .option("--tailscale", "put the VM on your tailnet for phone access (joins with TAILSCALE_AUTH_KEY, else `login`)")
   .option("--desktop", "install a Linux desktop you open in a browser (`desktop <vm>`); needs 4 GB+ RAM")
+  .option("--snapshot <snapshot>", "launch a copy of a snapshot (id or name, see `snapshots`); tools come from it")
   .option("--no-wait", "return as soon as the VM is created")
   .action(async (opts) => {
     const sshPublicKey = readFileSync(expandHome(opts.sshKey), "utf8");
     const keys = agentKeysFromEnv();
     const mode: SignInMode = opts.apiKeys ? "api-keys" : "subscription";
+    if (opts.snapshot) return createFromSnapshot(opts, sshPublicKey, keys, mode);
     const tools =
       opts.tools === undefined ? ALL_TOOL_IDS.filter((id) => !missingKey(id, keys, mode))
       : opts.tools === "none" ? []
@@ -156,12 +172,25 @@ program
     });
     console.log(`  public IP: ${vm.publicIp}`);
 
-    console.log("  installing tools (cloud-init)...");
-    await waitForCloudInit(vm.publicIp!);
-    if (mode === "api-keys" && (await installKeys(vm.publicIp!, keys))) {
-      console.log("  agent tools set up with your API keys");
-    }
-    const tailnetName = opts.tailscale && keys.tailscale ? await joinTailnet(vm.publicIp!, keys.tailscale, vm.name) : null;
+    let lastPhase = "";
+    await waitForCloudInit(vm.publicIp!, {
+      onPhase: (phase) => {
+        if (phase !== lastPhase) console.log(`  ${phase}...`);
+        lastPhase = phase;
+      },
+    });
+    const repos = loadProjectRepos(selectedProject ?? null);
+    const { tailnetName, cloned, problems } = await afterSetup(vm.publicIp!, {
+      name: vm.name,
+      mode,
+      keys,
+      tailscale: Boolean(opts.tailscale),
+      repos,
+    });
+    if (mode === "api-keys" && (keys.anthropic || keys.openai)) console.log("  agent tools set up with your API keys");
+    if (keys.github) console.log("  git signed in to GitHub with GITHUB_TOKEN");
+    for (const c of cloned.filter((c) => c.status !== "fail")) console.log(`  cloned ${c.repo}${c.status === "skip" ? " (already there)" : ""}`);
+    for (const problem of problems) console.warn(`  ✗ ${problem}`);
     console.log(`Ready. Connect with:\n  pnpm cli ssh ${vm.name}\n  ${sshCommand(vm.publicIp!)}`);
     if (tailnetName) console.log(`From your phone (Tailscale app + an SSH app):\n  ssh agent@${tailnetName}`);
     if (opts.desktop) console.log(`Open the desktop with:\n  pnpm cli desktop ${vm.name}${tailnetName ? ` (add --phone for your phone)` : ""}`);
@@ -169,6 +198,40 @@ program
       console.log(`Sign in ${opts.tailscale && !keys.tailscale ? "agent tools and Tailscale" : "agent tools"} with:\n  pnpm cli login ${vm.name}`);
     }
   });
+
+async function createFromSnapshot(
+  opts: { snapshot: string; name?: string; region?: string; size?: string; wait: boolean },
+  sshPublicKey: string,
+  keys: AgentKeys,
+  mode: SignInMode,
+): Promise<void> {
+  const { snapshot, cloud: target } = await fleet().findSnapshot(opts.snapshot);
+  const project = selectedProject ?? snapshot.project ?? undefined;
+  const created = await target.vms.launchFromSnapshot(snapshot, {
+    sshPublicKey,
+    name: opts.name,
+    project,
+    region: opts.region,
+    size: opts.size,
+  });
+  console.log(`Created ${created.name} from ${snapshot.name} on ${target.label} in ${created.region}${project ? ` (project ${project})` : ""}`);
+  if (!opts.wait) return;
+  const vm = await target.vms.waitForRunning(created.id);
+  forgetHostKey(vm.publicIp!);
+  console.log(`  public IP: ${vm.publicIp}`);
+  await waitForCloudInit(vm.publicIp!);
+  const { tailnetName, cloned, problems } = await afterSetup(vm.publicIp!, {
+    name: vm.name,
+    mode,
+    keys,
+    tailscale: "if-installed",
+    repos: loadProjectRepos(project ?? null),
+  });
+  for (const c of cloned.filter((c) => c.status === "ok")) console.log(`  cloned ${c.repo}`);
+  for (const problem of problems) console.warn(`  ✗ ${problem}`);
+  console.log(`Ready. Connect with:\n  pnpm cli ssh ${vm.name}`);
+  if (tailnetName) console.log(`From your phone: ssh agent@${tailnetName}`);
+}
 
 program
   .command("list")
@@ -201,10 +264,11 @@ program
 program
   .command("ssh <vm>")
   .description("Open a shell on an agent VM (id or name)")
-  .action(async (idOrName: string) => {
+  .option("-t, --tmux", "attach to the VM's persistent tmux session (programs keep running when you disconnect)")
+  .action(async (idOrName: string, opts) => {
     const { vm } = await fleet().findVm(idOrName);
     if (!vm.publicIp) throw new Error(`${vm.name} has no public IP yet (status ${vm.status})`);
-    process.exitCode = await openShell(vm.publicIp);
+    process.exitCode = opts.tmux ? await openTmux(vm.publicIp) : await openShell(vm.publicIp);
   });
 
 program
@@ -217,13 +281,57 @@ program
 
 program
   .command("keys <vm>")
-  .description("Set up the VM's agent tools with the API keys in .env (e.g. after changing a key)")
+  .description("Set up the VM with the API keys and GITHUB_TOKEN in .env and your git identity (e.g. after changing a key)")
   .action(async (idOrName: string) => {
     const { name, ip } = await vmIp(idOrName);
-    if (!(await installKeys(ip, agentKeysFromEnv()))) {
-      throw new Error("No ANTHROPIC_API_KEY or OPENAI_API_KEY in .env (see .env.example).");
+    const keys = agentKeysFromEnv();
+    const identity = localGitIdentity();
+    if (!(await installKeys(ip, keys, identity))) {
+      throw new Error("Nothing to set up: no API keys or GITHUB_TOKEN in .env (see .env.example), and no git user.name/user.email.");
     }
-    console.log(`Agent tools on ${name} now use the API keys from .env.`);
+    const done = [
+      keys.anthropic || keys.openai ? "agent tools use the API keys from .env" : null,
+      keys.github ? "git uses GITHUB_TOKEN" : null,
+      identity ? `commits are by ${identity.name} <${identity.email}>` : null,
+    ];
+    console.log(`On ${name}: ${done.filter(Boolean).join("; ")}.`);
+  });
+
+program
+  .command("clone <vm> <repo> [dir]")
+  .description("Clone a GitHub repo (owner/repo or URL) into the VM's home directory")
+  .action(async (idOrName: string, repo: string, dir: string | undefined) => {
+    const { name, ip } = await vmIp(idOrName);
+    const [result] = await cloneRepos(ip, [{ repo: parseRepo(repo), dir }]);
+    if (result?.status === "ok") return console.log(`Cloned ${result.repo} into ~/${dir ?? parseRepo(repo).name} on ${name}.`);
+    if (result?.status === "skip") return console.log(`~/${dir ?? parseRepo(repo).name} already exists on ${name}; left it alone.`);
+    const hint = agentKeysFromEnv().github
+      ? "Check that GITHUB_TOKEN can read it."
+      : `For private repos, add GITHUB_TOKEN to .env and run: pnpm cli keys ${name}`;
+    throw new Error(`couldn't clone ${result?.repo ?? repo}: ${result?.reason ?? "unknown error"}. ${hint}`);
+  });
+
+program
+  .command("repos <project> [action] [repo]")
+  .description("List a project's repos, or add/remove one: repos <project> add owner/repo. New VMs in the project clone them")
+  .action((project: string, action: string | undefined, repo: string | undefined) => {
+    assertProjectName(project);
+    const repos = loadProjectRepos(project);
+    if (action === undefined) {
+      if (repos.length === 0) return console.log(`${project} has no repos. Add one with: pnpm cli repos ${project} add owner/repo`);
+      return repos.forEach((r) => console.log(r));
+    }
+    if (action !== "add" && action !== "remove") throw new Error(`Unknown action "${action}": use add or remove.`);
+    if (!repo) throw new Error(`Which repo? pnpm cli repos ${project} ${action} owner/repo`);
+    const slug = repoSlug(parseRepo(repo));
+    if (action === "add") {
+      if (repos.includes(slug)) return console.log(`${slug} is already in ${project}.`);
+      saveProjectRepos(project, [...repos, slug]);
+      return console.log(`Added ${slug} to ${project}. VMs launched into ${project} will clone it; for existing ones: pnpm cli clone <vm> ${slug}`);
+    }
+    if (!repos.includes(slug)) throw new Error(`${slug} isn't in ${project}.`);
+    saveProjectRepos(project, repos.filter((r) => r !== slug));
+    console.log(`Removed ${slug} from ${project}. Existing clones on VMs are left alone.`);
   });
 
 program
@@ -243,11 +351,17 @@ program
   .command("desktop <vm>")
   .description("Open the VM's Linux desktop in your browser, over an SSH tunnel")
   .option("--install", "add the desktop to a VM launched without it (takes a few minutes)")
+  .option("--uninstall", "remove the desktop to free RAM and disk")
   .option("--phone", "serve the desktop to your tailnet over HTTPS and show a QR code to open it on your phone")
   .option("--phone-off", "stop serving the desktop to your tailnet")
   .option("--no-open", "don't open the browser, just print the address")
   .action(async (idOrName: string, opts) => {
     const { name, ip } = await vmIp(idOrName);
+    if (opts.uninstall) {
+      console.log(`Removing the desktop from ${name}...`);
+      await uninstallDesktop(ip);
+      return console.log(`Removed. Add it back with: pnpm cli desktop ${name} --install`);
+    }
     if (opts.install) {
       console.log(`Installing the desktop on ${name}...`);
       const code = await installDesktop(ip);
@@ -307,6 +421,111 @@ program
     console.log(`  public IP: ${woken.publicIp}`);
     await waitForCloudInit(woken.publicIp!);
     console.log(`Ready. Connect with: pnpm cli ssh ${vm.name}`);
+  });
+
+program
+  .command("autosleep [vm] [after]")
+  .description(
+    `Put a VM to sleep after it's idle for a while (e.g. autosleep <vm> 30m; default ${DEFAULT_AUTOSLEEP_MINUTES}m; "off" to stop). ` +
+      "Only while the TUI or `autosleep watch` is running. No VM: list settings",
+  )
+  .action(async (vmArg: string | undefined, after: string | undefined) => {
+    if (vmArg === undefined) {
+      const settings = Object.entries(loadAutosleep());
+      if (settings.length === 0) return console.log(`No VMs auto-sleep. Turn it on with: pnpm cli autosleep <vm> ${DEFAULT_AUTOSLEEP_MINUTES}m`);
+      for (const [name, minutes] of settings) console.log(`${name.padEnd(24)} after ${formatMinutes(minutes)} idle`);
+      return;
+    }
+    if (vmArg === "watch") return watchAutosleep();
+    const { vm, cloud } = await fleet().findVm(vmArg);
+    const minutes = after === undefined ? DEFAULT_AUTOSLEEP_MINUTES : parseIdleMinutes(after);
+    if (minutes !== null && !cloud.vms.provider.sleepKind) throw new Error(`Sleep isn't supported on ${cloud.label} yet.`);
+    saveAutosleep(vm.name, minutes);
+    if (minutes === null) return console.log(`${vm.name} won't auto-sleep.`);
+    console.log(
+      `${vm.name} sleeps after ${formatMinutes(minutes)} idle: no SSH session, desktop viewer, agent tool, ` +
+        "program in tmux or busy CPU. This runs while the TUI is open, or keep `pnpm cli autosleep watch` running.",
+    );
+  });
+
+async function watchAutosleep(): Promise<void> {
+  const sleeper = new AutoSleeper(fleet(), (event) => {
+    const time = new Date().toLocaleTimeString();
+    switch (event.kind) {
+      case "busy":
+        return console.log(`${time} ${event.vm}: busy (${event.reasons.join(", ")})`);
+      case "idle":
+        return console.log(`${time} ${event.vm}: idle ${event.idleMinutes}m of ${event.limitMinutes}m`);
+      case "sleeping":
+        return console.log(`${time} ${event.vm}: idle long enough, putting it to sleep`);
+      case "slept":
+        return console.log(`${time} ${event.vm}: asleep. Wake it with: pnpm cli wake ${event.vm}`);
+      case "error":
+        return console.warn(`${time} ${event.vm}: ${event.message}`);
+    }
+  });
+  console.log(`Watching for idle VMs every ${IDLE_CHECK_MS / 60_000} minutes. Press Ctrl+C to stop.`);
+  for (;;) {
+    const limits = loadAutosleep();
+    if (Object.keys(limits).length === 0) console.log("No VMs have auto-sleep on (pnpm cli autosleep <vm> 30m).");
+    else await sleeper.check((await fleet().listVms()).vms, limits);
+    await new Promise((resolve) => setTimeout(resolve, IDLE_CHECK_MS));
+  }
+}
+
+program
+  .command("snapshot <vm>")
+  .description("Save a copy of a VM's disk to launch new VMs from (create --snapshot); the VM keeps running")
+  .option("--live", "don't shut the VM down first (faster, but files being written may be inconsistent)")
+  .option("-y, --yes", "skip confirmation")
+  .action(async (idOrName: string, opts) => {
+    const { vm, cloud } = await fleet().findVm(idOrName);
+    console.warn(
+      (opts.live ? "" : `${vm.name} will be shut down for a few minutes while its disk is copied, then started again. `) +
+        "The snapshot includes everything on the disk, including signed-in credentials and API keys; " +
+        "anyone with access to your cloud account can launch it. Storage is about $0.06/GB/month.",
+    );
+    if (!opts.yes && !(await confirm(`Snapshot ${vm.name}?`))) return console.log("Cancelled.");
+    const snapshot = await cloud.vms.snapshot(vm, { live: opts.live, onStep: (step) => console.log(`  ${step}...`) });
+    if (!opts.live && vm.publicIp) {
+      console.log("  waiting for it to come back...");
+      await waitForCloudInit(vm.publicIp);
+    }
+    console.log(`Saved ${snapshot.name} (${snapshot.sizeGb} GB). Launch a copy with:\n  pnpm cli create --snapshot ${snapshot.name}`);
+  });
+
+program
+  .command("snapshots")
+  .description("List saved snapshots")
+  .action(async () => {
+    const { snapshots, errors } = await fleet().listSnapshots();
+    for (const { provider, message } of errors) console.error(`Couldn't list ${provider} snapshots: ${message}`);
+    const shown = selectedProject ? snapshots.filter((s) => s.project === selectedProject) : snapshots;
+    if (shown.length === 0) return console.log("No snapshots. Take one with: pnpm cli snapshot <vm>");
+    console.table(
+      shown.map((s) => ({
+        name: s.name,
+        from: s.sourceVm ?? "",
+        project: s.project ?? "",
+        provider: s.provider,
+        size: s.size ?? "",
+        "data (GB)": s.sizeGb,
+        regions: s.regions.join(" "),
+        "$/mo": s.monthly === null ? "" : formatCost(s.monthly),
+        created: s.createdAt,
+      })),
+    );
+  });
+
+program
+  .command("snapshot-delete <snapshot>")
+  .description("Delete a saved snapshot (id or name)")
+  .option("-y, --yes", "skip confirmation")
+  .action(async (idOrName: string, opts) => {
+    const { snapshot, cloud } = await fleet().findSnapshot(idOrName);
+    if (!opts.yes && !(await confirm(`Delete snapshot ${snapshot.name}?`))) return console.log("Cancelled.");
+    await cloud.vms.provider.deleteSnapshot!(snapshot.id);
+    console.log(`Deleted ${snapshot.name}.`);
   });
 
 program
@@ -374,13 +593,18 @@ program
 
 program
   .command("projects")
-  .description("List projects that have VMs")
+  .description("List projects, their VMs and repos")
   .action(async () => {
     const { vms } = await fleet().listVms();
     const counts = new Map<string, number>();
+    for (const name of loadProjectPrefs().projects) counts.set(name, 0);
     for (const vm of vms) counts.set(vm.project ?? "(no project)", (counts.get(vm.project ?? "(no project)") ?? 0) + 1);
     if (counts.size === 0) return console.log("No agent VMs. Launch into a project with: pnpm cli --project <name> create");
-    for (const [name, count] of [...counts].sort()) console.log(`${name.padEnd(32)} ${count} VM${count === 1 ? "" : "s"}`);
+    for (const [name, count] of [...counts].sort()) {
+      const repos = loadProjectRepos(name === "(no project)" ? null : name);
+      const reposText = repos.length > 0 ? `   repos: ${repos.join(", ")}` : "";
+      console.log(`${name.padEnd(32)} ${`${count} VM${count === 1 ? "" : "s"}`.padEnd(8)}${reposText}`);
+    }
   });
 
 program

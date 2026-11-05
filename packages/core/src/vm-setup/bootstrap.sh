@@ -13,11 +13,16 @@ log() {
   step="$*"
   echo "[agent-vm] $*"
 }
+# A short label for the CLI's progress display (it reads $STATE_DIR/phase).
+phase() {
+  echo "$*" > "$STATE_DIR/phase"
+}
 
 # The CLI reads these markers to report the outcome; cloud-init's own status
 # isn't reliable after a reboot.
 mkdir -p "$STATE_DIR"
 rm -f "$STATE_DIR/ready" "$STATE_DIR/failed"
+phase "securing the VM"
 trap 'rc=$?; if [ "$rc" -ne 0 ]; then echo "$step" > "$STATE_DIR/failed"; fi' EXIT
 
 # No interactive prompts from apt or needrestart (e.g. "pending kernel upgrade").
@@ -65,6 +70,7 @@ systemctl enable --now fail2ban
 systemctl restart fail2ban
 systemctl enable --now unattended-upgrades
 
+phase "adding Node.js"
 log "installing Node.js"
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y nodejs
@@ -73,11 +79,13 @@ log "preparing $AGENT_USER's environment"
 as_agent 'mkdir -p ~/.local/bin && npm config set prefix ~/.local'
 # Prepend (not append) so non-interactive ssh commands see the tools too;
 # Ubuntu's .bashrc returns early for non-interactive shells.
-as_agent "sed -i '1i export PATH=\"\$HOME/.local/bin:\$PATH\"' ~/.bashrc"
+grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$AGENT_HOME/.bashrc" ||
+  as_agent "sed -i '1i export PATH=\"\$HOME/.local/bin:\$PATH\"' ~/.bashrc"
 
 # Generated from the user's tool selection (see tools.ts).
 # shellcheck source=/dev/null
 . /usr/local/lib/agent-vm/install-tools.sh
 
+rm -f "$STATE_DIR/phase"
 date -u +%FT%TZ > "$STATE_DIR/ready"
 log "setup complete"

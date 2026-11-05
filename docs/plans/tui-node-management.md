@@ -1,6 +1,6 @@
 # TUI: Detailed VM Management
 
-> Status: draft for iteration. Last updated 2026-10-29.
+> Status: M1 and M2 shipped (detail view with live metrics; `i` or `→`), M3 mostly (`t` attaches to tmux), M5 shipped as the launch form. M4, M6 not started. Last updated 2026-11-05.
 > Part of Stage 1 in [PLAN.md](../../PLAN.md).
 
 ## 1. Goal
@@ -20,21 +20,21 @@ Out of scope here: the web app, multi-user and billing. But anything that isn't 
 Each milestone is small enough to build, try on a real VM, and adjust.
 
 ### M1: Detail view
-- [ ] `→` / `i` on a VM opens a full-screen detail view; `←` / `esc` goes back.
-- [ ] Provider interface returns more per VM: size slug, vCPU, RAM, disk, image, monthly/hourly price.
-- [ ] **Setup status from the VM itself:** check the `/var/lib/agent-vm/ready` marker over SSH, so status is right even after restarting the TUI. Shows `installing` / `ready` / `failed`.
-- [ ] Tool versions: claude, codex, node, python, git.
-- [ ] List view gets a `SETUP` indicator and a monthly cost column, and the header shows the total monthly cost.
+- [x] `→` / `i` on a VM opens a full-screen detail view; `←` / `esc` goes back. `enter`, `l` and `g` work there too.
+- [x] Provider interface returns more per VM: size slug, vCPU, RAM, disk, image, monthly/hourly price.
+- [x] **Setup status from the VM itself:** check the `/var/lib/agent-vm/ready` marker over SSH, so status is right even after restarting the TUI. Shows `installing` / `ready` / `failed`.
+- [x] Tool versions (claude, codex, agent-browser, opencode, node, python, git, gh), plus GitHub sign-in, commit identity, cloned repos, desktop and tailnet status, tmux sessions.
+- [x] Cost columns and totals shipped earlier. The list shows setup steps live for VMs launched in this session; a `SETUP` column for every VM isn't built (the detail view shows it).
 
 ### M2: Real-time metrics
-- [ ] Live CPU, memory, disk, network, load and uptime for the selected VM, updating every ~2s (design in §5).
-- [ ] Sparklines for CPU and memory (last ~60 samples ≈ 2 min).
-- [ ] Top processes by CPU (top 5), so you can see what the agent is doing.
-- [ ] Streaming only while the detail view is open. Closing the view or quitting stops it.
+- [x] Live CPU, memory, disk, network, load and uptime for the selected VM, updating every 2s (design in §5; per-process CPU from /proc/<pid>/stat deltas rather than `ps`, which reports lifetime averages).
+- [x] Sparklines for CPU and memory (last 48 samples ≈ 90s).
+- [x] Top processes by CPU (top 5), so you can see what the agent is doing.
+- [x] Streaming only while the detail view is open. Closing the view or quitting stops it.
 
 ### M3: Agent sessions (tmux)
-- [ ] `t` connects into a persistent tmux session (`tmux new -A -s agent`). Agents keep running after you disconnect, and `t` reattaches.
-- [ ] Detail view lists the VM's tmux sessions (`tmux ls`); select one to attach.
+- [x] `t` connects into a persistent tmux session (`tmux new -A -s agent`). Agents keep running after you disconnect, and `t` reattaches. (`pnpm cli ssh <vm> --tmux`.)
+- [ ] Detail view lists the VM's tmux sessions (`tmux ls`); select one to attach. (Listed, not selectable yet.)
 - [ ] Decide whether `enter` defaults to tmux or a plain shell (see §8).
 
 ### M4: Power controls
@@ -42,9 +42,9 @@ Each milestone is small enough to build, try on a real VM, and adjust.
 - [ ] `p` toggles power, `b` reboots, each with a confirmation. Status shows transitions (`stopping…`, `starting…`).
 - [ ] Show a **billing note**: a stopped VM is still billed on DigitalOcean (and on OVH unless shelved). Only delete stops the cost.
 
-### M5: Launch form
-- [ ] `n` opens a form: name, region, size (list with vCPU/RAM/price), image. Defaults prefilled, so `enter` straight through still launches in one step.
-- [ ] Remember the last choices locally (`~/.config/agent-vm/`).
+### M5: Launch form (shipped in [tui-iteration-2.md](tui-iteration-2.md) R1)
+- [x] `n` opens a form: name, region, size (list with vCPU/RAM/price), image. Defaults prefilled, so `enter` straight through still launches in one step.
+- [x] Remember the last choices locally (`~/.config/agent-vm/`).
 
 ### M6: Polish
 - [ ] `l` setup log: last 200 lines of `/var/log/cloud-init-output.log`, scrollable.

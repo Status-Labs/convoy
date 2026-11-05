@@ -4,6 +4,7 @@ import {
   type ProviderDefinition,
   type Region,
   type Size,
+  type Snapshot,
   type Vm,
   type VmProvider,
   type VmStatus,
@@ -47,6 +48,10 @@ const PROJECT_TAG = "agent-vm-project:";
 const ASLEEP_TAG = "agent-vm-asleep";
 const SIZE_TAG = "agent-vm-size:";
 const ASLEEP_ID = "asleep-";
+// Snapshots the user keeps (not sleep snapshots), plus size and project tags
+// like sleep snapshots, and the VM they came from.
+const SNAPSHOT_TAG = "agent-vm-snapshot";
+const FROM_TAG = "agent-vm-from:";
 // Snapshot storage, per GB-month: https://docs.digitalocean.com/products/snapshots/details/pricing/
 const SNAPSHOT_GB_MONTH = 0.06;
 const HOURS_PER_MONTH = 730;
@@ -60,6 +65,10 @@ interface Droplet {
   region: { slug: string };
   networks: { v4: { ip_address: string; type: string }[] };
   size: { slug: string; price_hourly: number; price_monthly: number };
+  vcpus: number;
+  memory: number;
+  disk: number;
+  image: { distribution?: string; name?: string } | null;
 }
 
 // A droplet snapshot, from /images.
@@ -70,6 +79,7 @@ interface DoSnapshot {
   created_at: string;
   regions: string[];
   size_gigabytes: number;
+  min_disk_size: number;
   tags: string[] | null;
 }
 
@@ -133,6 +143,13 @@ function toVm(droplet: Droplet): Vm {
       stoppedHourly: droplet.size.price_hourly,
       monthlyCap: droplet.size.price_monthly,
     },
+    spec: {
+      size: droplet.size.slug,
+      vcpus: droplet.vcpus,
+      ramGb: droplet.memory / 1024,
+      diskGb: droplet.disk,
+      image: droplet.image ? [droplet.image.distribution, droplet.image.name].filter(Boolean).join(" ") : undefined,
+    },
   };
 }
 
@@ -149,6 +166,23 @@ function asleepToVm(snapshot: DoSnapshot): Vm {
     createdAt: snapshot.created_at,
     project: tags.find((t) => t.startsWith(PROJECT_TAG))?.slice(PROJECT_TAG.length) ?? null,
     pricing: { hourly, stoppedHourly: hourly, monthlyCap: null },
+  };
+}
+
+function toSnapshot(image: DoSnapshot): Snapshot {
+  const tags = image.tags ?? [];
+  const tagged = (prefix: string) => tags.find((t) => t.startsWith(prefix))?.slice(prefix.length) ?? null;
+  return {
+    id: String(image.id),
+    name: image.name,
+    sourceVm: tagged(FROM_TAG),
+    project: tagged(PROJECT_TAG),
+    size: tagged(SIZE_TAG),
+    regions: image.regions,
+    sizeGb: image.size_gigabytes,
+    minDiskGb: image.min_disk_size,
+    createdAt: image.created_at,
+    monthly: image.size_gigabytes * SNAPSHOT_GB_MONTH,
   };
 }
 
@@ -193,7 +227,8 @@ export class DigitalOceanProvider implements VmProvider {
       name: request.name,
       region,
       size,
-      image: request.image ?? this.config.image,
+      // Snapshot ids are numbers; distribution images are slugs.
+      image: /^\d+$/.test(request.image ?? "") ? Number(request.image) : (request.image ?? this.config.image),
       user_data: request.userData,
       tags: request.project ? [TAG, PROJECT_TAG + request.project] : [TAG],
     });
@@ -212,34 +247,68 @@ export class DigitalOceanProvider implements VmProvider {
   // fails before the snapshot is safely tagged, the droplet is powered back on
   // and nothing is deleted.
   async sleepVm(id: string, onStep: (step: string) => void = () => {}): Promise<void> {
-    const { droplet } = await this.request<{ droplet: Droplet }>("GET", `/droplets/${encodeURIComponent(id)}`);
-    const tags = [ASLEEP_TAG, SIZE_TAG + droplet.size.slug, ...droplet.tags.filter((t) => t.startsWith(PROJECT_TAG))];
-
+    const droplet = await this.droplet(id);
     onStep("shutting down");
     await this.powerOff(id);
-    let snapshot: DoSnapshot | undefined;
     try {
       onStep("snapshotting");
-      await this.runAction(id, { type: "snapshot", name: droplet.name }, 2 * 60 * 60_000);
-      const { snapshots } = await this.request<{ snapshots: DoSnapshot[] }>(
-        "GET",
-        `/droplets/${encodeURIComponent(id)}/snapshots?per_page=200`,
-      );
-      snapshot = snapshots
-        .filter((s) => s.name === droplet.name)
-        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-      if (!snapshot) throw new Error("the snapshot finished but couldn't be found");
-      for (const tag of tags) await this.tagImage(tag, snapshot.id);
+      await this.takeSnapshot(droplet, droplet.name, [ASLEEP_TAG]);
     } catch (err) {
-      // The droplet is intact: start it again, and don't leave an untagged
-      // (invisible but billed) snapshot behind.
-      if (snapshot) await this.request("DELETE", `/snapshots/${snapshot.id}`).catch(() => {});
       await this.runAction(id, { type: "power_on" }).catch(() => {});
       throw err;
     }
-
     onStep("deleting the droplet");
     await this.request("DELETE", `/droplets/${encodeURIComponent(id)}`);
+  }
+
+  async snapshotVm(
+    id: string,
+    { name, live = false, onStep = () => {} }: { name: string; live?: boolean; onStep?: (step: string) => void },
+  ): Promise<Snapshot> {
+    const droplet = await this.droplet(id);
+    if (!live) {
+      onStep("shutting down");
+      await this.powerOff(id);
+    }
+    try {
+      onStep("snapshotting");
+      return toSnapshot(await this.takeSnapshot(droplet, name, [SNAPSHOT_TAG, FROM_TAG + droplet.name]));
+    } finally {
+      if (!live) {
+        onStep("starting up");
+        await this.runAction(id, { type: "power_on" });
+      }
+    }
+  }
+
+  async listSnapshots(): Promise<Snapshot[]> {
+    const { images } = await this.request<{ images: DoSnapshot[] }>("GET", `/images?tag_name=${SNAPSHOT_TAG}&per_page=200`);
+    return images.filter((i) => i.status === "available").map(toSnapshot);
+  }
+
+  async deleteSnapshot(id: string): Promise<void> {
+    await this.request("DELETE", `/snapshots/${encodeURIComponent(id)}`);
+  }
+
+  private async droplet(id: string): Promise<Droplet> {
+    const { droplet } = await this.request<{ droplet: Droplet }>("GET", `/droplets/${encodeURIComponent(id)}`);
+    return droplet;
+  }
+
+  // Snapshots the droplet and tags the snapshot with `tags` plus its size and
+  // project. If tagging fails, the snapshot is deleted rather than left
+  // untagged (invisible to us but billed).
+  private async takeSnapshot(droplet: Droplet, name: string, tags: string[]): Promise<DoSnapshot> {
+    const allTags = [...tags, SIZE_TAG + droplet.size.slug, ...droplet.tags.filter((t) => t.startsWith(PROJECT_TAG))];
+    await this.runAction(String(droplet.id), { type: "snapshot", name }, 2 * 60 * 60_000);
+    const snapshot = await this.findNewSnapshot(droplet.id, name);
+    try {
+      for (const tag of allTags) await this.tagImage(tag, snapshot.id);
+    } catch (err) {
+      await this.request("DELETE", `/snapshots/${snapshot.id}`).catch(() => {});
+      throw err;
+    }
+    return { ...snapshot, tags: allTags };
   }
 
   async wakeVm(id: string, userData: string): Promise<Vm> {
@@ -293,6 +362,27 @@ export class DigitalOceanProvider implements VmProvider {
       await sleep(10_000);
       ({ action: current } = await this.request<{ action: DoAction }>("GET", `/actions/${current.id}`));
     }
+  }
+
+  // A finished snapshot can take a while to show up in the droplet's own
+  // snapshot list; the account-wide list usually has it sooner.
+  private async findNewSnapshot(dropletId: number, name: string): Promise<DoSnapshot> {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const [{ snapshots: own }, { snapshots: all }] = await Promise.all([
+        this.request<{ snapshots: DoSnapshot[] }>("GET", `/droplets/${dropletId}/snapshots?per_page=200`),
+        this.request<{ snapshots: (DoSnapshot & { resource_id: string; min_disk_size: number })[] }>(
+          "GET",
+          "/snapshots?resource_type=droplet&per_page=200",
+        ),
+      ]);
+      const match = [...own, ...all.filter((s) => s.resource_id === String(dropletId))]
+        .filter((s) => s.name === name)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      // The two endpoints describe snapshots differently; the image API has every field we use.
+      if (match) return (await this.request<{ image: DoSnapshot }>("GET", `/images/${match.id}`)).image;
+      await sleep(5_000);
+    }
+    throw new Error(`the snapshot "${name}" finished but didn't show up in your account; check DigitalOcean's Snapshots page`);
   }
 
   private async tagImage(tag: string, imageId: number): Promise<void> {
