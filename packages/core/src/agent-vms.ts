@@ -8,6 +8,7 @@ export interface LaunchOptions {
   sshPublicKey: string;
   tools: ToolId[];
   tailscale?: boolean;
+  desktop?: boolean;
   name?: string;
   project?: string;
   region?: string;
@@ -31,7 +32,7 @@ export class AgentVms {
     return this.provider.createVm({
       name: options.name ?? newVmName(),
       project: options.project,
-      userData: buildCloudInit({ sshPublicKey: options.sshPublicKey, tools: options.tools, tailscale: options.tailscale }),
+      userData: buildCloudInit({ sshPublicKey: options.sshPublicKey, tools: options.tools, tailscale: options.tailscale, desktop: options.desktop }),
       region: options.region,
       size: options.size,
       image: options.image,

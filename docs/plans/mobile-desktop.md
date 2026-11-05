@@ -1,6 +1,6 @@
 # Linux Desktop on Agent VMs, Viewable from a Phone
 
-> Status: planned, not started. Last updated 2026-11-02.
+> Status: D1–D4 shipped (see [desktop.md](../desktop.md)); D5 (RDP) not started. Phone path (D3) untested with a real tailnet. Last updated 2026-11-04.
 > Builds on [phone-access.md](../phone-access.md) (Tailscale), which shipped first: the desktop is reached over the tailnet or an SSH tunnel, never an open port.
 
 ## 1. Goal
@@ -28,25 +28,25 @@ A desktop needs a bigger VM: plan on **4 GB RAM minimum** (`s-2vcpu-4gb`, ~$24/m
 ## 3. Milestones
 
 ### D1: Desktop option at launch
-- [ ] A **Desktop** checkbox at the tools step, next to Tailscale (`create --desktop`).
-- [ ] cloud-init installs XFCE (minimal, `xfce4` + `xfce4-terminal` + `dbus-x11`, no recommended extras) and KasmVNC (the `.deb` for the image's Ubuntu release from KasmVNC's GitHub releases, pinned version, checksum verified).
-- [ ] KasmVNC runs as the `agent` user under a systemd unit, on display `:1`, listening on `127.0.0.1` and the Tailscale address only. Never `0.0.0.0`.
-- [ ] A random desktop password per VM, generated on the VM at setup, stored mode 600 in `~/.config/agent-vm/desktop-password`. The CLI reads it over SSH to show it; it never goes in cloud-init user data.
-- [ ] Setup takes a few minutes longer. Show "installing desktop" as its own phase in the TUI.
-- [ ] Firefox (or Chromium) on the desktop so the user can browse alongside agents. agent-browser's Chromium can also run headed on this display (`DISPLAY=:1`), so the user watches what the agent does.
+- [x] A **Desktop** checkbox at the tools step, next to Tailscale (`create --desktop`).
+- [x] cloud-init installs XFCE (minimal, `xfce4` + `xfce4-terminal` + `dbus-x11`, no recommended extras) and KasmVNC (the `.deb` for the image's Ubuntu release from KasmVNC's GitHub releases, pinned version, checksum verified).
+- [x] KasmVNC runs as the `agent` user under a systemd unit (`agent-vm-desktop`), on display `:1`, listening on `127.0.0.1:8444` only. Phones reach it through `tailscale serve`, not a tailnet listener.
+- [x] A random desktop password per VM, generated on the VM at setup, stored mode 600 in `~/.config/agent-vm/desktop-password`. The CLI reads it over SSH to show it; it never goes in cloud-init user data.
+- [ ] Setup takes a minute or two longer (about 95s in testing). Show "installing desktop" as its own phase in the TUI. (Not yet: it's part of "installing tools".)
+- [x] Firefox (or Chromium) on the desktop so the user can browse alongside agents. agent-browser's Chromium can also run headed on this display (`DISPLAY=:1`), so the user watches what the agent does.
 
 ### D2: Open it from the laptop
-- [ ] `pnpm cli desktop <vm>`: forwards the desktop port over SSH (like `forward`), prints the URL and password, and opens the browser.
-- [ ] TUI key `g` (GUI) on a VM with a desktop: same thing, with the terminal suspended while the tunnel runs (or run the tunnel in the background and show "desktop open at …" in the status line).
+- [x] `pnpm cli desktop <vm>`: forwards the desktop port over SSH (like `forward`), prints the URL and password, and opens the browser.
+- [x] TUI key `g` (GUI): suspends the TUI, opens the tunnel and the browser, prints the password, and closes the tunnel on enter.
 
 ### D3: Open it from the phone
-- [ ] On VMs with Tailscale and Desktop, the desktop is reachable at `https://<vm-name>:<port>` on the tailnet.
-- [ ] `pnpm cli desktop <vm> --phone` prints that URL as text and as a **QR code** in the terminal, plus the password, so the phone opens it in one scan.
-- [ ] HTTPS: KasmVNC's self-signed certificate triggers a browser warning. Better: `tailscale cert` for a real certificate on the VM's `*.ts.net` name (needs HTTPS turned on in the tailnet), or `tailscale serve` in front of the desktop so the browser sees a valid certificate. Pick one in D3; `tailscale serve` is likely simplest.
-- [ ] Check the phone experience: touch to click, on-screen keyboard, pinch zoom, a lower resolution such as 1280×720 so text is readable, and clipboard to and from the phone.
+- [x] On VMs with Tailscale and Desktop, `--phone` serves the desktop at `https://<vm-name>.<tailnet>.ts.net` with `tailscale serve` (untested with a real tailnet).
+- [x] `pnpm cli desktop <vm> --phone` prints that URL as text and as a **QR code** in the terminal, plus the password, so the phone opens it in one scan.
+- [x] HTTPS: `tailscale serve` provides a real certificate for the `*.ts.net` name; the CLI checks that HTTPS certificates are on in the tailnet first and says how to turn them on.
+- [ ] Check the phone experience on real devices: touch to click, on-screen keyboard, pinch zoom, readable resolution, clipboard both ways. (A phone-sized headless browser rendered it fine; real devices not tried.)
 
 ### D4: Desktop on existing VMs
-- [ ] `pnpm cli desktop <vm> --install` adds the desktop to a VM launched without it (same script as cloud-init, run over SSH).
+- [x] `pnpm cli desktop <vm> --install` adds the desktop to a VM launched without it (same script as cloud-init, run over SSH).
 - [ ] `--uninstall` removes it to free RAM.
 
 ### D5: Optional RDP

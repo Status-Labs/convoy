@@ -13,9 +13,11 @@
     "@inkjs/ui": "^2.0.0",
     "commander": "^15.0.0",
     "ink": "^8.0.0",
+    "qrcode": "1.5.4",
     "react": "^19.3.1"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "tsx": "^4.23.15"
   }

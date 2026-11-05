@@ -14,6 +14,8 @@ export interface LaunchPrefs {
   signIn: SignInMode;
   /** Put new VMs on the user's tailnet (phone access). */
   tailscale: boolean;
+  /** Install the browser-viewable desktop. */
+  desktop: boolean;
 }
 
 interface PrefsFile {
@@ -21,6 +23,7 @@ interface PrefsFile {
   tools?: string[];
   signIn?: SignInMode;
   tailscale?: boolean;
+  desktop?: boolean;
   // Projects created here, and the one the TUI shows (absent = all).
   projects?: string[];
   project?: string;
@@ -53,15 +56,16 @@ export function loadLaunchPrefs(fleet: Fleet): LaunchPrefs {
   // Drop tools that no longer exist in the catalog.
   const tools = prefs.tools?.filter((id): id is ToolId => ALL_TOOL_IDS.includes(id as ToolId));
   const signIn = prefs.signIn === "api-keys" ? "api-keys" : "subscription";
-  return { provider, ...placementFor(fleet, provider), tools: tools ?? ALL_TOOL_IDS, signIn, tailscale: prefs.tailscale === true };
+  return { provider, ...placementFor(fleet, provider), tools: tools ?? ALL_TOOL_IDS, signIn, tailscale: prefs.tailscale === true, desktop: prefs.desktop === true };
 }
 
-export function saveLaunchPrefs({ provider, region, size, tools, signIn, tailscale }: LaunchPrefs): void {
+export function saveLaunchPrefs({ provider, region, size, tools, signIn, tailscale, desktop }: LaunchPrefs): void {
   const prefs = readPrefs();
   prefs.provider = provider;
   prefs.tools = tools;
   prefs.signIn = signIn;
   prefs.tailscale = tailscale;
+  prefs.desktop = desktop;
   prefs.providers = { ...prefs.providers, [provider]: { region, size } };
   writePrefs(prefs);
 }

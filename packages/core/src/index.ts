@@ -9,3 +9,4 @@ export * from "./cost";
 export * from "./credentials";
 export * from "./projects";
 export * from "./tailscale";
+export * from "./desktop";

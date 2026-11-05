@@ -1,0 +1,10 @@
+# agent-vm: lets browsers installed by agent tools (agent-browser) use
+# Chrome's sandbox. It needs user namespaces, which Ubuntu 24.04 restricts to
+# programs with an AppArmor profile that allows them.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile agent-vm-chrome /home/*/.agent-browser/browsers/*/chrome flags=(unconfined) {
+  userns,
+  include if exists <local/agent-vm-chrome>
+}

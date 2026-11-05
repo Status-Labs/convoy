@@ -3,6 +3,7 @@ import { Box, Text, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
 import {
   AGENT_TOOLS,
+  DESKTOP_MIN_RAM_GB,
   keyStatus,
   missingKey,
   type AgentKeys,
@@ -155,12 +156,13 @@ export function LaunchForm({ fleet, initial, keys, project, onLaunch, onCancel }
         {step === "tools" && (
           <ToolStep
             initial={initial.tools}
-            initialTailscale={initial.tailscale}
+            initialExtras={{ tailscale: initial.tailscale, desktop: initial.desktop }}
+            ramGb={sizeInfo?.ramGb}
             keys={keys}
             mode={signIn}
             summary={`${cloud.label} ${region} · ${sizeLabel(size, sizeInfo)}`}
-            onLaunch={(tools, tailscale, count) =>
-              onLaunch({ provider: providerName, region, size, tools, signIn, tailscale }, count)
+            onLaunch={(tools, extras, count) =>
+              onLaunch({ provider: providerName, region, size, tools, signIn, ...extras }, count)
             }
             onBack={() => setStep("signin")}
           />
@@ -524,32 +526,44 @@ function SignInStep({ current, keys, onPick, onBack }: SignInStepProps) {
 // Launching many VMs at once is a swarm; keep it under typical account limits.
 const MAX_COUNT = 10;
 
+/** Options below the tools that aren't agent tools. */
+export interface Extras {
+  tailscale: boolean;
+  desktop: boolean;
+}
+
 interface ToolStepProps {
   initial: ToolId[];
-  initialTailscale: boolean;
+  initialExtras: Extras;
   keys: AgentKeys;
   mode: SignInMode;
   summary: string;
-  onLaunch: (tools: ToolId[], tailscale: boolean, count: number) => void;
+  /** RAM of the chosen size, when known. */
+  ramGb: number | undefined;
+  onLaunch: (tools: ToolId[], extras: Extras, count: number) => void;
   onBack: () => void;
 }
 
-// The Tailscale row sits below the tools, at this cursor position.
-const TAILSCALE_ROW = AGENT_TOOLS.length;
+const EXTRAS: { id: keyof Extras; name: string; description: string }[] = [
+  { id: "tailscale", name: "Tailscale", description: "Reach it from your phone, no open ports" },
+  { id: "desktop", name: "Desktop", description: "Linux desktop + Firefox, in your browser" },
+];
 
-function ToolStep({ initial, initialTailscale, keys, mode, summary, onLaunch, onBack }: ToolStepProps) {
+function ToolStep({ initial, initialExtras, keys, mode, summary, ramGb, onLaunch, onBack }: ToolStepProps) {
   // Tools missing a required API key can't be picked.
   const available = AGENT_TOOLS.filter((tool) => !missingKey(tool.id, keys, mode)).map((tool) => tool.id);
   const [cursor, setCursor] = useState(0);
   const [count, setCount] = useState(1);
   const [chosen, setChosen] = useState<Set<ToolId>>(new Set(initial.filter((id) => available.includes(id))));
-  const [tailscale, setTailscale] = useState(initialTailscale);
+  const [extras, setExtras] = useState(initialExtras);
+  // Extras rows come after the tools.
+  const extra = EXTRAS[cursor - AGENT_TOOLS.length];
 
   useInput((input, key) => {
     if (key.escape) return onBack();
     if (key.upArrow || input === "k") return setCursor((c) => Math.max(0, c - 1));
-    if (key.downArrow || input === "j") return setCursor((c) => Math.min(TAILSCALE_ROW, c + 1));
-    if (input === " " && cursor === TAILSCALE_ROW) return setTailscale((on) => !on);
+    if (key.downArrow || input === "j") return setCursor((c) => Math.min(AGENT_TOOLS.length + EXTRAS.length - 1, c + 1));
+    if (input === " " && extra) return setExtras((current) => ({ ...current, [extra.id]: !current[extra.id] }));
     if (input === " ") {
       const id = AGENT_TOOLS[cursor]!.id;
       if (!available.includes(id)) return;
@@ -565,9 +579,17 @@ function ToolStep({ initial, initialTailscale, keys, mode, summary, onLaunch, on
     if (input === "+" || input === "=" || key.rightArrow) return setCount((c) => Math.min(MAX_COUNT, c + 1));
     if (input === "-" || key.leftArrow) return setCount((c) => Math.max(1, c - 1));
     if (key.return) {
-      onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id), tailscale, count);
+      onLaunch(AGENT_TOOLS.filter((tool) => chosen.has(tool.id)).map((tool) => tool.id), extras, count);
     }
   });
+
+  const extraStatus: Record<keyof Extras, { text: string; ok: boolean }> = {
+    tailscale: { text: keys.tailscale ? "joins with TAILSCALE_AUTH_KEY" : "sign in on the VM", ok: true },
+    desktop:
+      ramGb !== undefined && ramGb < DESKTOP_MIN_RAM_GB
+        ? { text: `cramped in ${ramGb} GB; pick ${DESKTOP_MIN_RAM_GB} GB+`, ok: false }
+        : { text: "adds a few minutes to setup", ok: true },
+  };
 
   return (
     <Box flexDirection="column">
@@ -596,18 +618,29 @@ function ToolStep({ initial, initialTailscale, keys, mode, summary, onLaunch, on
         );
       })}
 
-      <Box marginTop={1}>
-        <Text color="cyan">{cursor === TAILSCALE_ROW ? "❯ " : "  "}</Text>
-        <Text color={tailscale ? "green" : undefined} dimColor={!tailscale}>
-          {tailscale ? "[x] " : "[ ] "}
-        </Text>
-        <Box width={16}>
-          <Text bold={cursor === TAILSCALE_ROW}>Tailscale</Text>
-        </Box>
-        <Box width={44}>
-          <Text dimColor>Reach it from your phone, no open ports</Text>
-        </Box>
-        <Text dimColor>{keys.tailscale ? "joins with TAILSCALE_AUTH_KEY" : "sign in on the VM"}</Text>
+      <Box marginTop={1} flexDirection="column">
+        {EXTRAS.map((option, index) => {
+          const isCursor = AGENT_TOOLS.length + index === cursor;
+          const on = extras[option.id];
+          const status = extraStatus[option.id];
+          return (
+            <Box key={option.id}>
+              <Text color="cyan">{isCursor ? "❯ " : "  "}</Text>
+              <Text color={on ? "green" : undefined} dimColor={!on}>
+                {on ? "[x] " : "[ ] "}
+              </Text>
+              <Box width={16}>
+                <Text bold={isCursor}>{option.name}</Text>
+              </Box>
+              <Box width={44}>
+                <Text dimColor>{option.description}</Text>
+              </Box>
+              <Text color={status.ok ? undefined : "yellow"} dimColor={status.ok}>
+                {status.text}
+              </Text>
+            </Box>
+          );
+        })}
       </Box>
 
       <Box marginTop={1} flexDirection="column">
@@ -619,7 +652,8 @@ function ToolStep({ initial, initialTailscale, keys, mode, summary, onLaunch, on
         <Text>
           Launch <Text bold>{count === 1 ? "1 VM" : `${count} VMs`}</Text> on <Text bold>{summary}</Text>
           {chosen.size === 0 ? " with no tools" : ` with ${chosen.size} tool${chosen.size === 1 ? "" : "s"}`}
-          {tailscale ? " on your tailnet" : ""}
+          {extras.desktop ? ", a desktop" : ""}
+          {extras.tailscale ? " on your tailnet" : ""}
         </Text>
       </Box>
       {count > 1 && mode === "subscription" && (

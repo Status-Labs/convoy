@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import { useCallback, useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
 import {
+  DESKTOP_USER,
   formatCost,
   formatRate,
   hourlyRate,
@@ -15,10 +17,13 @@ import {
 } from "@agent-platform/core";
 import { saveCurrentProject, saveLaunchPrefs, type LaunchPrefs } from "../prefs";
 import {
+  desktopPassword,
   forgetHostKey,
   installKeys,
   joinTailnet,
   leaveTailnet,
+  openDesktopTunnel,
+  openInBrowser,
   openShell,
   runInteractive,
   waitForCloudInit,
@@ -248,6 +253,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         choice.signIn === "subscription" || (choice.tailscale && !keys.tailscale)
           ? "Select it and press l to sign in"
           : "Select it and press enter to connect",
+        choice.desktop ? "Press g to open its desktop" : null,
         tailnetName ? `On your phone: ssh agent@${tailnetName}` : null,
       ];
       setMessage({ text: `${name} is ready. ${next.filter(Boolean).join(". ")}.`, tone: "success" });
@@ -280,6 +286,43 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       process.stdout.write(`Signing in agent tools on ${row.name} (${ip}).\n`);
       await runInteractive(ip, SIGN_IN_SCRIPT);
     });
+  }
+
+  async function openDesktop(row: Row) {
+    const ip = row.vm?.publicIp;
+    if (!ip) {
+      setMessage({ text: `${row.name} has no IP address yet.`, tone: "info" });
+      return;
+    }
+    setMessage({ text: `Opening ${row.name}'s desktop…`, tone: "info" });
+    let password: string | null;
+    try {
+      password = await desktopPassword(ip);
+    } catch (err) {
+      setMessage({ text: `Couldn't open the desktop: ${errorText(err)}`, tone: "error" });
+      return;
+    }
+    if (!password) {
+      setMessage({ text: `${row.name} has no desktop. Add one: pnpm cli desktop ${row.name} --install`, tone: "info" });
+      return;
+    }
+    await suspendTerminal(async () => {
+      try {
+        const tunnel = await openDesktopTunnel(ip);
+        openInBrowser(tunnel.url);
+        process.stdout.write(
+          `${row.name}'s desktop is open at ${tunnel.url}\n  user: ${DESKTOP_USER}\n  password: ${password}\n\n` +
+            `For your phone: pnpm cli desktop ${row.name} --phone\n`,
+        );
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        await Promise.race([rl.question("Press enter to close the desktop and go back. "), tunnel.closed]);
+        rl.close();
+        tunnel.close();
+      } catch (err) {
+        process.stdout.write(`Couldn't open the desktop: ${errorText(err)}\n`);
+      }
+    });
+    setMessage(null);
   }
 
   async function remove(row: Row) {
@@ -328,11 +371,12 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     if (!row) return;
     if (row.busy) return setMessage({ text: `${row.name} is ${row.busy}…`, tone: "info" });
     const asleep = row.vm?.status === "asleep";
-    if (asleep && (key.return || input === "l")) {
+    if (asleep && (key.return || input === "l" || input === "g")) {
       return setMessage({ text: `${row.name} is asleep. Press w to wake it.`, tone: "info" });
     }
     if (key.return) return void connect(row);
     if (input === "l") return void signIn(row);
+    if (input === "g") return void openDesktop(row);
     if (input === "w") {
       if (!asleep) return setMessage({ text: `${row.name} isn't asleep.`, tone: "info" });
       return void wakeVm(row);
@@ -451,6 +495,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         <Key k="n" label="new" />
         <Key k="⏎" label="connect" />
         <Key k="l" label="sign in" />
+        <Key k="g" label="desktop" />
         <Key k="s" label="sleep" />
         <Key k="w" label="wake" />
         <Key k="d" label="delete" />

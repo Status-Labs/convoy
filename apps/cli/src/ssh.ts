@@ -1,9 +1,15 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { createConnection, createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  DESKTOP_INFO_SCRIPT,
+  DESKTOP_PHONE_OFF_SCRIPT,
+  DESKTOP_PHONE_SCRIPT,
+  DESKTOP_PORT,
   TAILSCALE_LEAVE_SCRIPT,
+  desktopInstallScript,
   VM_USER,
   keySetupScript,
   tailscaleJoinScript,
@@ -103,6 +109,102 @@ export function forwardPort(ip: string, localPort: number, remotePort: number): 
     [...sshArgs(ip, ["-N", "-o", "ExitOnForwardFailure=yes", "-L", `${localPort}:localhost:${remotePort}`])],
     "inherit",
   );
+}
+
+/** Installs the desktop on an existing VM, showing the install's progress. */
+export function installDesktop(ip: string): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn("ssh", [...sshArgs(ip, ["-o", "BatchMode=yes"]), "sudo bash -s"], {
+      stdio: ["pipe", "inherit", "inherit"],
+    });
+    child.on("exit", (code) => resolve(code ?? 1));
+    child.on("error", () => resolve(1));
+    child.stdin.end(desktopInstallScript());
+  });
+}
+
+/** The VM's desktop password, or null if it has no desktop. */
+export async function desktopPassword(ip: string): Promise<string | null> {
+  const { code, stdout, stderr } = await runScript(ip, DESKTOP_INFO_SCRIPT, { timeoutMs: 60_000 });
+  if (code === 3) return null;
+  if (code !== 0 || !stdout) throw new Error(`couldn't read the desktop password: ${stderr || `exit ${code}`}`);
+  return stdout;
+}
+
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer()
+      .once("error", () => resolve(false))
+      .once("listening", () => server.close(() => resolve(true)))
+      .listen(port, "127.0.0.1");
+  });
+}
+
+function canConnect(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ port, host: "127.0.0.1" })
+      .once("connect", () => (socket.destroy(), resolve(true)))
+      .once("error", () => resolve(false));
+  });
+}
+
+export interface DesktopTunnel {
+  url: string;
+  /** Resolves when the tunnel ends (closed, or the connection dropped). */
+  closed: Promise<void>;
+  close(): void;
+}
+
+/**
+ * Tunnels the VM's desktop to localhost and resolves once it's reachable.
+ * Uses the desktop's own port locally when it's free, so the browser
+ * remembers the password for it.
+ */
+export async function openDesktopTunnel(ip: string): Promise<DesktopTunnel> {
+  let port = DESKTOP_PORT;
+  while (!(await portIsFree(port))) port++;
+  const child: ChildProcess = spawn(
+    "ssh",
+    sshArgs(ip, ["-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-L", `${port}:127.0.0.1:${DESKTOP_PORT}`]),
+    { stdio: "ignore" },
+  );
+  const closed = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  let exited = false;
+  void closed.then(() => (exited = true));
+  const deadline = Date.now() + 20_000;
+  while (!(await canConnect(port))) {
+    if (exited || Date.now() > deadline) {
+      child.kill();
+      throw new Error("couldn't open an SSH tunnel to the desktop");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return { url: `http://localhost:${port}`, closed, close: () => child.kill() };
+}
+
+/** Serves the desktop to the tailnet over HTTPS and returns its URL. */
+export async function serveDesktopToTailnet(ip: string): Promise<string> {
+  const { code, stdout, stderr } = await runScript(ip, DESKTOP_PHONE_SCRIPT, { timeoutMs: 90_000 });
+  if (code === 0 && stdout) return stdout.split("\n").at(-1)!;
+  if (code === 3) throw new Error("this VM has no desktop. Add one with: pnpm cli desktop <vm> --install");
+  if (code === 4) throw new Error("this VM isn't on your tailnet. Add it with: pnpm cli tailscale <vm>");
+  if (code === 5) {
+    throw new Error(
+      "HTTPS is off in your tailnet. Turn on HTTPS Certificates at https://login.tailscale.com/admin/dns, then retry",
+    );
+  }
+  throw new Error(`couldn't serve the desktop to your tailnet: ${stderr.split("\n").at(-1) || `exit ${code}`}`);
+}
+
+export async function stopServingDesktop(ip: string): Promise<void> {
+  const { code, stderr } = await runScript(ip, DESKTOP_PHONE_OFF_SCRIPT, { timeoutMs: 30_000 });
+  if (code !== 0) throw new Error(`couldn't stop serving the desktop: ${stderr || `exit ${code}`}`);
+}
+
+/** Opens a URL in the user's browser. Best effort. */
+export function openInBrowser(url: string): void {
+  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
+  spawn(command, [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
 }
 
 // Runs on the VM once cloud-init is idle. Trusts bootstrap.sh's markers, not

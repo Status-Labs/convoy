@@ -49,6 +49,10 @@ systemctl try-restart ssh.service
 log "applying kernel network hardening"
 sysctl --system >/dev/null
 
+# Keeps Chrome's sandbox working for agent browsers instead of --no-sandbox.
+log "loading AppArmor profile for agent browsers"
+apparmor_parser -r /etc/apparmor.d/agent-vm-chrome
+
 log "configuring firewall (inbound: ssh only)"
 ufw default deny incoming
 ufw default allow outgoing

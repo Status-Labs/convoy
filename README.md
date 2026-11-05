@@ -16,7 +16,7 @@ cp .env.example .env   # fill in credentials for one or more providers
 pnpm cli               # open the interactive TUI
 ```
 
-In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `l` signs in the agent tools, `s` puts a VM to sleep and `w` wakes it, `p` switches project, `d` deletes, `q` quits.
+In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `l` signs in the agent tools, `g` opens the VM's desktop, `s` puts a VM to sleep and `w` wakes it, `p` switches project, `d` deletes, `q` quits.
 
 **Sleep** a VM you're not using so it costs only storage, and wake it when you need it, with its disk exactly as you left it:
 - **DigitalOcean** bills powered-off droplets in full, so sleep shuts the droplet down, snapshots it, and deletes it. Waking creates a new droplet from the snapshot (same name, size, region and project) and deletes the snapshot. A snapshot costs $0.06 per GB of disk in use per month: a VM with ~3 GB in use goes from $24/mo to about $0.16/mo. In testing, sleeping took about 1 minute and waking about 1.5 minutes.
@@ -31,6 +31,8 @@ The list shows each VM's hourly rate and its estimated cost so far this month, w
 
 **From your phone.** Tick *Tailscale* at the tools step (`create --tailscale`) to put the VM on your private Tailscale network. Your phone's SSH app can then connect from anywhere with `ssh agent@<vm-name>`, signed in with your Tailscale account, and no port is opened to the internet. See [docs/phone-access.md](docs/phone-access.md).
 
+**A desktop.** Tick *Desktop* at the tools step (`create --desktop`) for a Linux desktop with Firefox that you open in a browser: press `g` on the VM, or use `pnpm cli desktop <vm> --phone` for a QR code to open it on your phone over Tailscale. Nothing is opened to the internet. See [docs/desktop.md](docs/desktop.md).
+
 The same actions are available as commands for scripting:
 
 ```sh
@@ -43,6 +45,7 @@ pnpm cli ssh <name>
 pnpm cli login <name>  # sign in agent tools with your own accounts
 pnpm cli keys <name>   # re-apply API keys from .env to a VM
 pnpm cli tailscale <name>  # put an existing VM on your tailnet
+pnpm cli desktop <name>    # open the VM's desktop (--install, --phone, --phone-off)
 pnpm cli delete <name>
 
 pnpm cli --provider aws create   # launch on a non-default cloud

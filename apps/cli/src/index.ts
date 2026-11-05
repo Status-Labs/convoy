@@ -5,6 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import {
   ALL_TOOL_IDS,
+  DESKTOP_USER,
   Fleet,
   PROVIDERS,
   SIGN_IN_SCRIPT,
@@ -21,8 +22,15 @@ import {
   type Cloud,
   type SignInMode,
 } from "@agent-platform/core";
+import QRCode from "qrcode";
 import {
+  desktopPassword,
   forgetHostKey,
+  installDesktop,
+  openDesktopTunnel,
+  openInBrowser,
+  serveDesktopToTailnet,
+  stopServingDesktop,
   forwardPort,
   installKeys,
   joinTailnet,
@@ -111,6 +119,7 @@ program
   .option("--tools <ids>", `comma-separated tools to install, or "none" (default: all: ${ALL_TOOL_IDS.join(",")})`)
   .option("--api-keys", "set up tools with the API keys in .env (default: sign in yourself with `login`)")
   .option("--tailscale", "put the VM on your tailnet for phone access (joins with TAILSCALE_AUTH_KEY, else `login`)")
+  .option("--desktop", "install a Linux desktop you open in a browser (`desktop <vm>`); needs 4 GB+ RAM")
   .option("--no-wait", "return as soon as the VM is created")
   .action(async (opts) => {
     const sshPublicKey = readFileSync(expandHome(opts.sshKey), "utf8");
@@ -127,6 +136,7 @@ program
       sshPublicKey,
       tools,
       tailscale: opts.tailscale,
+      desktop: opts.desktop,
       project: selectedProject,
       name: opts.name,
       region: opts.region,
@@ -154,6 +164,7 @@ program
     const tailnetName = opts.tailscale && keys.tailscale ? await joinTailnet(vm.publicIp!, keys.tailscale, vm.name) : null;
     console.log(`Ready. Connect with:\n  pnpm cli ssh ${vm.name}\n  ${sshCommand(vm.publicIp!)}`);
     if (tailnetName) console.log(`From your phone (Tailscale app + an SSH app):\n  ssh agent@${tailnetName}`);
+    if (opts.desktop) console.log(`Open the desktop with:\n  pnpm cli desktop ${vm.name}${tailnetName ? ` (add --phone for your phone)` : ""}`);
     if (mode === "subscription" || (opts.tailscale && !keys.tailscale)) {
       console.log(`Sign in ${opts.tailscale && !keys.tailscale ? "agent tools and Tailscale" : "agent tools"} with:\n  pnpm cli login ${vm.name}`);
     }
@@ -226,6 +237,43 @@ program
     }
     const tailnetName = await joinTailnet(ip, authKey, name);
     console.log(`${name} is on your tailnet. From your phone (Tailscale app + an SSH app):\n  ssh agent@${tailnetName}`);
+  });
+
+program
+  .command("desktop <vm>")
+  .description("Open the VM's Linux desktop in your browser, over an SSH tunnel")
+  .option("--install", "add the desktop to a VM launched without it (takes a few minutes)")
+  .option("--phone", "serve the desktop to your tailnet over HTTPS and show a QR code to open it on your phone")
+  .option("--phone-off", "stop serving the desktop to your tailnet")
+  .option("--no-open", "don't open the browser, just print the address")
+  .action(async (idOrName: string, opts) => {
+    const { name, ip } = await vmIp(idOrName);
+    if (opts.install) {
+      console.log(`Installing the desktop on ${name}...`);
+      const code = await installDesktop(ip);
+      if (code !== 0) throw new Error(`desktop install failed (exit ${code})`);
+    }
+    if (opts.phoneOff) {
+      await stopServingDesktop(ip);
+      return console.log(`${name}'s desktop is no longer served to your tailnet.`);
+    }
+    const password = await desktopPassword(ip);
+    if (!password) throw new Error(`${name} has no desktop. Add one with: pnpm cli desktop ${name} --install`);
+    const login = `  user: ${DESKTOP_USER}\n  password: ${password}`;
+
+    if (opts.phone) {
+      const url = await serveDesktopToTailnet(ip);
+      console.log(await QRCode.toString(url, { type: "terminal", small: true }));
+      console.log(`On your phone (Tailscale app connected), scan the code or open:\n  ${url}\n${login}`);
+      console.log(`Only devices on your tailnet can open it. Stop with: pnpm cli desktop ${name} --phone-off`);
+      return;
+    }
+
+    const tunnel = await openDesktopTunnel(ip);
+    console.log(`${name}'s desktop is at ${tunnel.url}\n${login}\nPress Ctrl+C to close the tunnel.`);
+    if (opts.open) openInBrowser(tunnel.url);
+    process.once("SIGINT", () => tunnel.close());
+    await tunnel.closed;
   });
 
 program
