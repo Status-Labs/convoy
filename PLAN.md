@@ -122,7 +122,7 @@ We use Convoy every day before anyone else does. Each step is small and works on
 1. [ ] Rename to Convoy everywhere: README title, package names (`@convoy/core`, `@convoy/cli`), the `convoy` command and the config folder (`~/.config/convoy`, reading the old `agent-vm` one if it's there).
 2. [ ] One Convoy project per active Status Labs product, cloning the product repo and `Status-Labs/weeoh` side by side (`~/wemail`, `~/weeoh`). Already supported by project repos; document the setup in `docs/`.
 3. [ ] Shyup on VMs: `SHYUP_URL` and `SHYUP_TOKEN` in `.env`, copied over SSH like `GITHUB_TOKEN` (re-applied by `keys`), and Shyup's MCP server registered with Claude Code and Codex during setup.
-4. [ ] Commit identity for agents: decide between a bot GitHub account and the user's identity plus a `Co-Authored-By` trailer, so it's always clear when an agent wrote the code.
+4. [ ] Commit identity for agents (decided in Weeoh decision 0003): an optional `GIT_AGENT_NAME` / `GIT_AGENT_EMAIL` in `.env` sets the VM's git identity to the machine account instead of copying yours, and a git `prepare-commit-msg` hook adds an `Agent: <tool> on convoy <vm>` trailer. `GITHUB_TOKEN` is that account's fine-grained token.
 5. [ ] End to end on one product: an agent on a `wemail` VM picks up a `WEM` task in Shyup, opens a PR, comments the link on the task, and a human merges it.
 6. [ ] Write down what hurts after two weeks; that drives the next steps (likely: start an agent on a task in one command, e.g. `convoy run <vm> WEM-12`, and auto-sleep on by default for agent VMs).
 
