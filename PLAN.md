@@ -117,7 +117,7 @@ This proves the OVH API, quotas, boot time and the tool install script before we
 
 ### Stage 1b: Run Status Labs' own agents
 
-We use Convoy every day before anyone else does. Each step is small and works on its own. See Weeoh's `agents/README.md` for how the company uses it.
+We use Convoy every day before anyone else does. Each step is small and works on its own. v1 is a few VMs, one per product repo: a founder signs in to their own Claude subscription on each, drives the lead agent there, and connects over Tailscale (phone included). Other designs (a hub VM driving child VMs, Claude Code cloud sessions) get assessed after v1. See Weeoh's `agents/README.md` for how the company uses it.
 
 1. [ ] Rename to Convoy everywhere: README title, package names (`@convoy/core`, `@convoy/cli`), the `convoy` command and the config folder (`~/.config/convoy`, reading the old `agent-vm` one if it's there).
 2. [ ] One VM per active Status Labs product repo, cloning the product repo and `Status-Labs/weeoh` side by side (`~/wemail`, `~/weeoh`). One lead agent runs on it and starts subagents for parallel work. Already supported by project repos; document the setup in `docs/`.
