@@ -34,7 +34,7 @@ The list shows each VM's hourly rate and its estimated cost so far this month, w
 
 **Signing in agent tools.** At launch, choose *Sign in yourself* to use your Claude or ChatGPT plan (press `l` on the VM when it's ready), or *API keys from .env* for swarms: tools are signed in on boot, and you can launch up to 10 VMs at once. See [docs/agent-credentials.md](docs/agent-credentials.md).
 
-**GitHub.** Every VM has `git` and `gh`. Put a fine-grained `GITHUB_TOKEN` in `.env` and VMs can clone, pull and push your private repos (in either sign-in mode); commits use your local git name and email. `pnpm cli clone <vm> owner/repo` clones one-off. See [docs/github.md](docs/github.md).
+**GitHub.** Every VM has `git`, `gh` and GitLab's `glab`. Put a fine-grained `GITHUB_TOKEN` in `.env` and VMs can clone, pull and push your private repos (in either sign-in mode); commits use your local git name and email. `pnpm cli clone <vm> owner/repo` clones one-off. See [docs/github.md](docs/github.md).
 
 **From your phone.** Tick *Tailscale* at the tools step (`create --tailscale`) to put the VM on your private Tailscale network. Your phone's SSH app can then connect from anywhere with `ssh agent@<vm-name>`, signed in with your Tailscale account, and no port is opened to the internet. See [docs/phone-access.md](docs/phone-access.md).
 
@@ -82,7 +82,7 @@ Tools are installed for the `agent` user under `~/.local`, so they can update th
 - Firewall (`ufw`): all inbound traffic denied except SSH
 - `fail2ban` bans IPs that repeatedly fail SSH login
 - Basic kernel network hardening (no ICMP redirects or source routing, SYN cookies)
-- Base toolchain: git, GitHub CLI (`gh`), Node.js 22, Python 3, build tools, ripgrep, jq, tmux
+- Base toolchain: git, GitHub CLI (`gh`), GitLab CLI (`glab`), Node.js 22, Python 3, build tools, ripgrep, jq, tmux
 
 **Docker never exposes ports by accident.** Docker normally bypasses `ufw` when publishing ports. On these VMs:
 - Published ports bind to `127.0.0.1` by default (`/etc/docker/daemon.json`), even if Docker is installed later.

@@ -20,6 +20,7 @@ ver "Node.js" node
 ver "Python" python3
 ver "git" git
 ver "gh" gh
+ver "glab" glab
 if [ -f /etc/systemd/system/agent-vm-desktop.service ]; then put desktop "$(systemctl is-active agent-vm-desktop 2>/dev/null)"; fi
 if command -v tailscale >/dev/null; then
   ts=$(tailscale status --json 2>/dev/null)

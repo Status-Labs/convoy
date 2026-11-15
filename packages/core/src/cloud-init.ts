@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { stringify } from "yaml";
 import { GH_INSTALL } from "./github";
+import { GLAB_INSTALL } from "./gitlab";
 import { TAILSCALE_INSTALL } from "./tailscale";
 import { AGENT_TOOLS, type ToolId } from "./tools";
 
@@ -41,6 +42,10 @@ function installToolsScript(tools: ToolId[], tailscale: boolean, desktop: boolea
     "phase 'adding GitHub CLI'",
     "log 'installing GitHub CLI'",
     GH_INSTALL,
+    "",
+    "phase 'adding GitLab CLI'",
+    "log 'installing GitLab CLI'",
+    GLAB_INSTALL,
   ];
   if (tailscale) lines.push("", "phase 'adding Tailscale'", "log 'installing Tailscale'", TAILSCALE_INSTALL);
   if (desktop) lines.push("", "phase 'adding desktop'", "log 'installing desktop'", "bash /usr/local/lib/agent-vm/desktop.sh");
