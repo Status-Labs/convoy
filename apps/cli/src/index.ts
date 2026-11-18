@@ -28,7 +28,7 @@ import {
   type AgentKeys,
   type Cloud,
   type SignInMode,
-} from "@agent-platform/core";
+} from "@convoy/core";
 import QRCode from "qrcode";
 import { afterSetup } from "./after-setup";
 import { AutoSleeper } from "./autosleep";
@@ -104,7 +104,7 @@ async function vmIp(idOrName: string): Promise<{ name: string; ip: string }> {
 }
 
 const program = new Command()
-  .name("agent-vm")
+  .name("convoy")
   .description("Launch isolated cloud VMs for running AI agent tools")
   .option(
     "-p, --provider <name>",
@@ -563,7 +563,7 @@ program
       [
         `WARNING: this makes port ${p} on ${name} (${ip}) reachable by anyone on the internet.`,
         "Automated scanners find open ports within minutes. Only expose services that require",
-        "authentication, and close the port again with `agent-vm unexpose` when done.",
+        "authentication, and close the port again with `convoy unexpose` when done.",
         `If you only need to reach it yourself, use instead:  pnpm cli forward ${name} ${p}`,
         "",
       ].join("\n"),

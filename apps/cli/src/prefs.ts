@@ -1,10 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { ALL_TOOL_IDS, type Fleet, type SignInMode, type ToolId } from "@agent-platform/core";
+import { ALL_TOOL_IDS, type Fleet, type SignInMode, type ToolId } from "@convoy/core";
+import { CONFIG_DIR, configDir } from "./config-dir";
 
 // The user's last launch choices. .env values are only the first-run defaults.
-const PREFS_PATH = join(homedir(), ".config", "agent-vm", "prefs.json");
+const PREFS_PATH = join(CONFIG_DIR, "prefs.json");
 
 export interface LaunchPrefs {
   provider: string;
@@ -37,6 +37,7 @@ interface PrefsFile {
 
 function readPrefs(): PrefsFile {
   try {
+    configDir();
     return JSON.parse(readFileSync(PREFS_PATH, "utf8")) as PrefsFile;
   } catch {
     return {};

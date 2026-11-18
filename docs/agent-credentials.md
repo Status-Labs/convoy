@@ -8,7 +8,7 @@ When you launch VMs, you choose how their agent tools sign in:
 | How | Press `l` on the VM in the TUI (or `pnpm cli login <vm>`) and finish each tool's own login in your browser | Keys are installed on boot; tools work immediately |
 | Billing | Your plan's usage limits | Per-token API billing |
 
-Subscription logins are never copied between machines: each VM signs in through Anthropic's and OpenAI's own login flows. That keeps agent-vm within each vendor's terms and guidance (details below).
+Subscription logins are never copied between machines: each VM signs in through Anthropic's and OpenAI's own login flows. That keeps Convoy within each vendor's terms and guidance (details below).
 
 ## Sign in yourself
 
@@ -46,13 +46,13 @@ In the TUI, the tools step shows how each tool will sign in.
 
 ## Why Claude logins aren't copied
 
-Anthropic's [Claude Code legal and compliance page](https://code.claude.com/docs/en/legal-and-compliance) says subscription (OAuth) logins are for ordinary use of Claude Code, and that developers "may not collect, store, or intermediate Claude.ai credentials or session tokens — sign-in to a Claude account must complete through Anthropic's own flow." agent-vm copying a Claude login to many VMs would be that kind of tool, so it never does. API keys are explicitly fine to put in "a development environment, secrets manager, or machine image" for your own use, billed to you.
+Anthropic's [Claude Code legal and compliance page](https://code.claude.com/docs/en/legal-and-compliance) says subscription (OAuth) logins are for ordinary use of Claude Code, and that developers "may not collect, store, or intermediate Claude.ai credentials or session tokens — sign-in to a Claude account must complete through Anthropic's own flow." Convoy copying a Claude login to many VMs would be that kind of tool, so it never does. API keys are explicitly fine to put in "a development environment, secrets manager, or machine image" for your own use, billed to you.
 
-Signing in yourself on each VM goes through Anthropic's own flow, and agent-vm never sees the token. That's the "Sign in yourself" mode.
+Signing in yourself on each VM goes through Anthropic's own flow, and Convoy never sees the token. That's the "Sign in yourself" mode.
 
 ## Codex with a ChatGPT plan
 
-OpenAI documents copying `~/.codex/auth.json` to a headless machine, but its [CI/CD auth guide](https://learn.chatgpt.com/docs/auth/ci-cd-auth.md) says: "Do not share the same file across concurrent jobs or multiple machines." Codex refreshes the login and writes it back, so copies on other VMs stop working. agent-vm therefore doesn't copy it; each VM signs in on its own with "Sign in yourself". OpenAI's guide also says "the right way to authenticate automation is with an API key".
+OpenAI documents copying `~/.codex/auth.json` to a headless machine, but its [CI/CD auth guide](https://learn.chatgpt.com/docs/auth/ci-cd-auth.md) says: "Do not share the same file across concurrent jobs or multiple machines." Codex refreshes the login and writes it back, so copies on other VMs stop working. Convoy therefore doesn't copy it; each VM signs in on its own with "Sign in yourself". OpenAI's guide also says "the right way to authenticate automation is with an API key".
 
 ## How keys are stored on the VM
 

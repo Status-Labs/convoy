@@ -1,5 +1,5 @@
 {
-  "name": "@agent-platform/cli",
+  "name": "@convoy/cli",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
@@ -9,7 +9,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@agent-platform/core": "workspace:*",
+    "@convoy/core": "workspace:*",
     "@inkjs/ui": "^2.0.0",
     "commander": "^15.0.0",
     "ink": "^8.0.0",

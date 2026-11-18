@@ -1,7 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   DESKTOP_INFO_SCRIPT,
@@ -26,13 +24,14 @@ import {
   type CloneResult,
   type GitIdentity,
   type RepoRef,
-} from "@agent-platform/core";
+} from "@convoy/core";
+import { CONFIG_DIR, configDir } from "./config-dir";
 
 // VMs get recycled IPs, so keep their host keys out of ~/.ssh/known_hosts.
-const KNOWN_HOSTS = join(homedir(), ".config", "agent-vm", "known_hosts");
+const KNOWN_HOSTS = join(CONFIG_DIR, "known_hosts");
 
 function sshArgs(ip: string, extra: string[] = []): string[] {
-  mkdirSync(join(homedir(), ".config", "agent-vm"), { recursive: true });
+  configDir();
   return [
     "-o", "StrictHostKeyChecking=accept-new",
     "-o", `UserKnownHostsFile=${KNOWN_HOSTS}`,

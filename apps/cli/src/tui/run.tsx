@@ -1,5 +1,5 @@
 import { render } from "ink";
-import { Fleet, agentKeysFromEnv, configFromEnv } from "@agent-platform/core";
+import { Fleet, agentKeysFromEnv, configFromEnv } from "@convoy/core";
 import { loadLaunchPrefs, loadProjectPrefs } from "../prefs";
 import { App, SetupNeeded } from "./app";
 

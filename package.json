@@ -1,5 +1,5 @@
 {
-  "name": "agent-platform",
+  "name": "convoy",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "cli": "pnpm --silent --filter @agent-platform/cli start",
+    "cli": "pnpm --silent --filter @convoy/cli start",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {

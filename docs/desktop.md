@@ -51,7 +51,7 @@ pnpm cli desktop <vm> --phone-off
 - Agents on the VM can read the desktop password (it's in `agent`'s home), like the API keys.
 - After 5 wrong passwords, KasmVNC refuses sign-ins for a few seconds. Tunnelled connections all come from the VM's localhost, so this briefly locks out every viewer, you included.
 - Snapshots of a sleeping VM include the desktop and its password.
-- KasmVNC isn't updated by the VM's automatic security updates; agent-vm pins a version, and a newer agent-vm can reinstall it with `desktop <vm> --install`.
+- KasmVNC isn't updated by the VM's automatic security updates; Convoy pins a version, and a newer Convoy can reinstall it with `desktop <vm> --install`.
 
 ## Troubleshooting
 

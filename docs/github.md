@@ -27,7 +27,7 @@ Press `l` on the VM (or `pnpm cli login <vm>`). If `gh` isn't signed in, it asks
 
 ## Commits are yours
 
-agent-vm copies `user.name` and `user.email` from your local git config to each VM, so commits made there are attributed to you. If they aren't set locally, set them (`git config --global user.name "…"`), then run `pnpm cli keys <vm>`.
+Convoy copies `user.name` and `user.email` from your local git config to each VM, so commits made there are attributed to you. If they aren't set locally, set them (`git config --global user.name "…"`), then run `pnpm cli keys <vm>`.
 
 ## Clone repos
 

@@ -18,7 +18,7 @@ Usage: sudo agent-vm-firewall <command>
   apply-docker-rules  rewrite the Docker rules in $AFTER_RULES (used at setup)
 
 Safer than exposing: forward the port over SSH from your machine
-  agent-vm forward <vm> <port>
+  convoy forward <vm> <port>
 EOF
 }
 

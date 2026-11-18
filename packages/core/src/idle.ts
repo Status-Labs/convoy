@@ -1,6 +1,6 @@
 // Auto-sleep: a VM that has been idle for a while is put to sleep, so a
 // forgotten VM costs storage instead of compute. The watcher runs on the
-// user's machine (the TUI while it's open, or `agent-vm autosleep watch`)
+// user's machine (the TUI while it's open, or `convoy autosleep watch`)
 // and checks VMs over SSH; nothing on the VM can sleep it, so no cloud token
 // ever goes onto a VM.
 

@@ -1,4 +1,4 @@
-# Agent Platform
+# Convoy
 
 Launch isolated cloud VMs, preloaded with AI agent tools (Claude Code, Codex CLI), with one command.
 Supports DigitalOcean, AWS EC2 (untested against a real account yet) and OVHcloud Public Cloud, side by side. See [PLAN.md](PLAN.md) for where this is going.
@@ -16,7 +16,7 @@ cp .env.example .env   # fill in credentials for one or more providers
 pnpm cli               # open the interactive TUI
 ```
 
-In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/agent-vm/prefs.json`; the row shows each setup step as it runs), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `t` attaches to the VM's tmux session (programs keep running after you detach with Ctrl+B D), `i` opens the VM's details with live CPU, memory, disk and network, `l` signs in the agent tools, `g` opens the VM's desktop, `s` puts a VM to sleep and `w` wakes it, `a` turns auto-sleep on or off, `b` snapshots it, `tab` shows snapshots, `p` switches project, `d` deletes, `q` quits.
+In the TUI: `n` launches a VM (pick cloud → region → size → tools; press enter through to reuse your last choices, saved in `~/.config/convoy/prefs.json`; the row shows each setup step as it runs), `↑/↓` selects, `enter` connects over SSH (exit the shell to come back), `t` attaches to the VM's tmux session (programs keep running after you detach with Ctrl+B D), `i` opens the VM's details with live CPU, memory, disk and network, `l` signs in the agent tools, `g` opens the VM's desktop, `s` puts a VM to sleep and `w` wakes it, `a` turns auto-sleep on or off, `b` snapshots it, `tab` shows snapshots, `p` switches project, `d` deletes, `q` quits.
 
 **Details.** `i` (or `→`) on a VM shows its size and cost, installed tool versions, GitHub sign-in, cloned repos, desktop and tailnet status, and live metrics streamed over SSH (nothing is installed on the VM for this): CPU and memory with a 90-second history, disk use and I/O, network, load and the busiest processes.
 
@@ -109,7 +109,7 @@ More detail, including troubleshooting: [docs/port-forwarding.md](docs/port-forw
 ## Layout
 
 - `packages/core`: provider-independent VM logic, the tool catalog (`src/tools.ts`), the VM setup scripts (`src/vm-setup/`), one module per cloud provider (`src/providers/`; add a provider by writing a `ProviderDefinition` and listing it in `providers/index.ts`), and the VM setup script (cloud-init), shared by the CLI and the future web app
-- `apps/cli`: the `agent-vm` TUI and CLI (Ink + commander)
+- `apps/cli`: the `convoy` TUI and CLI (Ink + commander)
 
 ## License
 

@@ -1,4 +1,4 @@
-# Agent Platform: Plan
+# Convoy: Plan
 
 > Status: v1 plan. Last updated 2026-10-24.
 > The long-term concept lives in [docs/archive/VISION.md](docs/archive/VISION.md). Ignore it for now.
@@ -107,10 +107,10 @@ Billing, teams, multiple VMs per user, VM sizes, region choice, browser terminal
 An interactive TUI (`pnpm cli`) for day-to-day use, plus plain subcommands for scripting. Detailed VM management and live metrics are planned in [docs/plans/tui-node-management.md](docs/plans/tui-node-management.md). Reads OVH credentials from a config file or env vars. Commands roughly:
 
 ```
-agent-vm create      # launch a VM with cloud-init, print SSH command when ready
-agent-vm list        # show VMs and their status
-agent-vm ssh <id>    # connect
-agent-vm delete <id>
+convoy create      # launch a VM with cloud-init, print SSH command when ready
+convoy list        # show VMs and their status
+convoy ssh <id>    # connect
+convoy delete <id>
 ```
 
 This proves the OVH API, quotas, boot time and the tool install script before we build any UI. Ready = we can go from `create` to running `claude` in a VM reliably.
@@ -119,7 +119,7 @@ This proves the OVH API, quotas, boot time and the tool install script before we
 
 We use Convoy for our own agent work before anyone else does. Each step is small and works on its own. v1 is a few VMs, one per repo: the user signs in to their own Claude subscription on each, drives the lead agent there, and connects over Tailscale (phone included). Other designs (a hub VM driving child VMs, cloud agent sessions) get assessed after v1.
 
-1. [ ] Rename to Convoy everywhere: README title, package names (`@convoy/core`, `@convoy/cli`), the `convoy` command and the config folder (`~/.config/convoy`, reading the old `agent-vm` one if it's there).
+1. [x] Rename to Convoy everywhere: README title, package names (`@convoy/core`, `@convoy/cli`), the `convoy` command and the config folder (`~/.config/convoy`, reading the old `agent-vm` one if it's there).
 2. [ ] One VM per repo, with any extra repos the agent needs cloned side by side (`~/app`, `~/docs`). One lead agent runs on it and starts subagents for parallel work. Already supported by project repos; document the setup in `docs/`.
 3. [ ] Extra services on VMs: chosen `.env` values (a task manager's URL and token, say) copied over SSH like `GITHUB_TOKEN` (re-applied by `keys`), and their MCP servers registered with Claude Code and Codex during setup.
 4. [ ] Commit identity for agents: an optional `GIT_AGENT_NAME` / `GIT_AGENT_EMAIL` in `.env` sets the VM's git identity to a machine account instead of copying yours, and a git `prepare-commit-msg` hook adds an `Agent: <tool> on convoy <vm>` trailer. Subagents share the identity.

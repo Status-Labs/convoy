@@ -1,5 +1,5 @@
 {
-  "name": "@agent-platform/core",
+  "name": "@convoy/core",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
