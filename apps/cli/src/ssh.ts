@@ -311,7 +311,7 @@ export function openInBrowser(url: string): void {
 // after a reboot even if setup failed. Exit codes: 0 ready, 1 failed (prints
 // the failed step), 100 reboot pending, 101 still running (prints the phase).
 const SETUP_CHECK = [
-  "state=/var/lib/agent-vm",
+  "state=/var/lib/convoy",
   "case \"$(cloud-init status 2>/dev/null)\" in *running*|*'not started'*)",
   "  if [ -f $state/phase ]; then cat $state/phase; elif [ -f $state/ready ]; then echo 'finishing up'; else echo 'updating packages'; fi",
   "  exit 101;; esac",

@@ -25,14 +25,14 @@ as_agent() {
   runuser -u "$AGENT_USER" -- env HOME="$AGENT_HOME" USER="$AGENT_USER" bash -c 'cd ~ && '"$1"
 }
 
-echo "[agent-vm] installing desktop (XFCE)"
+echo "[convoy] installing desktop (XFCE)"
 apt-get update -q
 apt-get install -y -q --no-install-recommends \
   xfce4 xfce4-terminal xfce4-notifyd dbus-x11 at-spi2-core \
   fonts-dejavu fonts-noto-color-emoji xdg-utils
 
 # Ubuntu's firefox package installs the snap; Mozilla's apt repo has the deb.
-echo "[agent-vm] installing Firefox"
+echo "[convoy] installing Firefox"
 install -d -m 0755 /etc/apt/keyrings
 curl -fsSL https://packages.mozilla.org/apt/repo-signing-key.gpg -o /etc/apt/keyrings/packages.mozilla.org.asc
 echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" \
@@ -53,12 +53,12 @@ cat > /etc/firefox/policies/policies.json <<'EOF'
 }
 EOF
 
-echo "[agent-vm] installing KasmVNC $KASMVNC_VERSION"
+echo "[convoy] installing KasmVNC $KASMVNC_VERSION"
 codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
 arch=$(dpkg --print-architecture)
 sha=${KASMVNC_SHA256[${codename}_${arch}]:-}
 if [ -z "$sha" ]; then
-  echo "[agent-vm] no KasmVNC package for ubuntu $codename/$arch" >&2
+  echo "[convoy] no KasmVNC package for ubuntu $codename/$arch" >&2
   exit 1
 fi
 deb=$(mktemp --suffix=.deb)
@@ -69,12 +69,12 @@ chmod 644 "$deb"
 apt-get install -y -q "$deb"
 rm -f "$deb"
 
-echo "[agent-vm] configuring the desktop"
+echo "[convoy] configuring the desktop"
 # KasmVNC checks its default certificate at startup, even with SSL off.
 usermod -aG ssl-cert "$AGENT_USER"
-as_agent "mkdir -p ~/.vnc ~/.config/agent-vm && chmod 700 ~/.config/agent-vm"
+as_agent "mkdir -p ~/.vnc ~/.config/convoy && chmod 700 ~/.config/convoy"
 cat > "$AGENT_HOME/.vnc/kasmvnc.yaml" <<EOF
-# agent-vm: localhost only, plain HTTP. Reached through an SSH tunnel or
+# convoy: localhost only, plain HTTP. Reached through an SSH tunnel or
 # tailscale serve (HTTPS), so traffic never leaves the VM unencrypted.
 desktop:
   resolution:
@@ -100,16 +100,16 @@ chmod 755 "$AGENT_HOME/.vnc/xstartup"
 touch "$AGENT_HOME/.vnc/.de-was-selected"
 
 # One password per VM, made here so it never travels in cloud-init user data.
-password_file=$AGENT_HOME/.config/agent-vm/desktop-password
+password_file=$AGENT_HOME/.config/convoy/desktop-password
 if [ ! -s "$password_file" ]; then
   (umask 077 && openssl rand -base64 24 | tr -d '/+=\n' | cut -c1-20 > "$password_file")
 fi
-chown -R "$AGENT_USER:$AGENT_USER" "$AGENT_HOME/.vnc" "$AGENT_HOME/.config/agent-vm"
-as_agent 'pw=$(cat ~/.config/agent-vm/desktop-password) && printf "%s\n%s\n" "$pw" "$pw" | kasmvncpasswd -u agent -w ~/.kasmpasswd >/dev/null && chmod 600 ~/.kasmpasswd'
+chown -R "$AGENT_USER:$AGENT_USER" "$AGENT_HOME/.vnc" "$AGENT_HOME/.config/convoy"
+as_agent 'pw=$(cat ~/.config/convoy/desktop-password) && printf "%s\n%s\n" "$pw" "$pw" | kasmvncpasswd -u agent -w ~/.kasmpasswd >/dev/null && chmod 600 ~/.kasmpasswd'
 
-cat > /etc/systemd/system/agent-vm-desktop.service <<EOF
+cat > /etc/systemd/system/convoy-desktop.service <<EOF
 [Unit]
-Description=agent-vm desktop (KasmVNC on 127.0.0.1:$PORT)
+Description=convoy desktop (KasmVNC on 127.0.0.1:$PORT)
 After=network.target
 
 [Service]
@@ -124,5 +124,5 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now agent-vm-desktop.service
-echo "[agent-vm] desktop ready on 127.0.0.1:$PORT"
+systemctl enable --now convoy-desktop.service
+echo "[convoy] desktop ready on 127.0.0.1:$PORT"

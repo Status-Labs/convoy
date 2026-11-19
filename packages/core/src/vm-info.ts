@@ -5,7 +5,7 @@
 /** Prints `key<TAB>value` lines. Run as the agent user. */
 export const VM_INFO_SCRIPT = `
 export PATH="$HOME/.local/bin:$PATH"
-state=/var/lib/agent-vm
+state=/var/lib/convoy
 put() { printf '%s\\t%s\\n' "$1" "$2"; }
 if [ -f $state/failed ]; then put setup "failed: $(cat $state/failed)"
 elif [ -f $state/ready ]; then put setup ready
@@ -21,7 +21,7 @@ ver "Python" python3
 ver "git" git
 ver "gh" gh
 ver "glab" glab
-if [ -f /etc/systemd/system/agent-vm-desktop.service ]; then put desktop "$(systemctl is-active agent-vm-desktop 2>/dev/null)"; fi
+if [ -f /etc/systemd/system/convoy-desktop.service ]; then put desktop "$(systemctl is-active convoy-desktop 2>/dev/null)"; fi
 if command -v tailscale >/dev/null; then
   ts=$(tailscale status --json 2>/dev/null)
   put tailscale "$(jq -r '.BackendState // "stopped"' <<<"$ts" 2>/dev/null) $(jq -r '.Self.DNSName // ""' <<<"$ts" 2>/dev/null | sed 's/\\.$//')"

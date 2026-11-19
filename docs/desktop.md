@@ -41,9 +41,9 @@ pnpm cli desktop <vm> --phone-off
 ## What's on the VM
 
 - XFCE, Firefox (from Mozilla's own package repository) and KasmVNC 1.5.2 (pinned, checksum verified).
-- KasmVNC runs as the `agent` user on display `:1`, as the `agent-vm-desktop` systemd service, listening on `127.0.0.1:8444`.
+- KasmVNC runs as the `agent` user on display `:1`, as the `convoy-desktop` systemd service, listening on `127.0.0.1:8444`.
 - Agents can use the desktop's display: `DISPLAY=:1 firefox`, or a headed agent-browser, and you watch it happen.
-- The password is generated on the VM at setup and stored in `~/.config/agent-vm/desktop-password` (mode 600). It never goes into the cloud provider's setup data.
+- The password is generated on the VM at setup and stored in `~/.config/convoy/desktop-password` (mode 600). It never goes into the cloud provider's setup data.
 
 ## Security notes
 
@@ -56,5 +56,5 @@ pnpm cli desktop <vm> --phone-off
 ## Troubleshooting
 
 - **"has no desktop"**: the VM was launched without one. Add it with `--install`.
-- **"Failed to connect to server"** in the page: the desktop service isn't running. `pnpm cli ssh <vm>`, then `sudo systemctl status agent-vm-desktop` and `sudo journalctl -u agent-vm-desktop`.
+- **"Failed to connect to server"** in the page: the desktop service isn't running. `pnpm cli ssh <vm>`, then `sudo systemctl status convoy-desktop` and `sudo journalctl -u convoy-desktop`.
 - **`--phone` says HTTPS is off**: turn on HTTPS Certificates in your tailnet's DNS settings (above).

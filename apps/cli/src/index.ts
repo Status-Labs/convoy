@@ -125,7 +125,7 @@ const program = new Command()
 program
   .command("create")
   .description("Launch a new agent VM and wait until it is ready")
-  .option("--name <name>", "VM name (default: agent-vm-<random>)")
+  .option("--name <name>", "VM name (default: convoy-<random>)")
   .option("--region <region>", "region (default from .env)")
   .option("--size <size>", "size / flavor name (default from .env)")
   .option("--image <image>", "image name (default from .env)")
@@ -572,7 +572,7 @@ program
       console.log("Cancelled.");
       return;
     }
-    process.exitCode = await runRemote(ip, `sudo agent-vm-firewall expose ${p}`);
+    process.exitCode = await runRemote(ip, `sudo convoy-firewall expose ${p}`);
   });
 
 program
@@ -580,7 +580,7 @@ program
   .description("Close a port opened with `expose`")
   .action(async (idOrName: string, port: string) => {
     const { ip } = await vmIp(idOrName);
-    process.exitCode = await runRemote(ip, `sudo agent-vm-firewall unexpose ${parsePort(port)}`);
+    process.exitCode = await runRemote(ip, `sudo convoy-firewall unexpose ${parsePort(port)}`);
   });
 
 program
@@ -588,7 +588,7 @@ program
   .description("Show exposed ports and firewall rules on a VM")
   .action(async (idOrName: string) => {
     const { ip } = await vmIp(idOrName);
-    process.exitCode = await runRemote(ip, "sudo agent-vm-firewall status");
+    process.exitCode = await runRemote(ip, "sudo convoy-firewall status");
   });
 
 program

@@ -1,16 +1,16 @@
 #!/bin/bash
-# agent-vm-firewall: control which ports are reachable from the internet.
+# convoy-firewall: control which ports are reachable from the internet.
 # Only SSH is open by default, and that includes ports published by Docker.
 set -euo pipefail
 
-STATE=/etc/agent-vm/exposed-ports
+STATE=/etc/convoy/exposed-ports
 AFTER_RULES=/etc/ufw/after.rules
-BEGIN_MARK="# BEGIN AGENT-VM DOCKER"
-END_MARK="# END AGENT-VM DOCKER"
+BEGIN_MARK="# BEGIN CONVOY DOCKER"
+END_MARK="# END CONVOY DOCKER"
 
 usage() {
   cat <<EOF
-Usage: sudo agent-vm-firewall <command>
+Usage: sudo convoy-firewall <command>
 
   status              show exposed ports and firewall rules
   expose <port>       open a TCP port to the whole internet (host and Docker)
@@ -24,14 +24,14 @@ EOF
 
 require_root() {
   if [ "$(id -u)" -ne 0 ]; then
-    echo "agent-vm-firewall: run with sudo" >&2
+    echo "convoy-firewall: run with sudo" >&2
     exit 1
   fi
 }
 
 check_port() {
   if ! [[ "${1:-}" =~ ^[0-9]+$ ]] || [ "$1" -lt 1 ] || [ "$1" -gt 65535 ]; then
-    echo "agent-vm-firewall: invalid port '${1:-}'" >&2
+    echo "convoy-firewall: invalid port '${1:-}'" >&2
     exit 1
   fi
 }
@@ -73,13 +73,13 @@ expose() {
 WARNING: port $1 is now reachable by anyone on the internet.
 Anything listening on it (including Docker containers) can be found and
 attacked by automated scanners within minutes. Make sure it requires
-authentication, and run 'sudo agent-vm-firewall unexpose $1' when done.
+authentication, and run 'sudo convoy-firewall unexpose $1' when done.
 
 Docker publishes to 127.0.0.1 by default on this VM. To expose a container,
 also publish it on all interfaces: docker run -p 0.0.0.0:$1:<container-port> ...
 EOF
   grep -qx "$1" "$STATE" 2>/dev/null || echo "$1" >> "$STATE"
-  ufw allow "$1/tcp" comment 'agent-vm expose' >/dev/null
+  ufw allow "$1/tcp" comment 'convoy expose' >/dev/null
   apply_docker_rules
   ufw reload >/dev/null
   echo "Exposed port $1."

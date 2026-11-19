@@ -48,9 +48,9 @@ pnpm cli unexpose <vm> 8080     # close it again
 On the VM itself, the same commands are:
 
 ```sh
-sudo agent-vm-firewall status
-sudo agent-vm-firewall expose 8080
-sudo agent-vm-firewall unexpose 8080
+sudo convoy-firewall status
+sudo convoy-firewall expose 8080
+sudo convoy-firewall unexpose 8080
 ```
 
 Exposed ports stay open across reboots until you run `unexpose`.

@@ -30,8 +30,8 @@ A desktop needs a bigger VM: plan on **4 GB RAM minimum** (`s-2vcpu-4gb`, ~$24/m
 ### D1: Desktop option at launch
 - [x] A **Desktop** checkbox at the tools step, next to Tailscale (`create --desktop`).
 - [x] cloud-init installs XFCE (minimal, `xfce4` + `xfce4-terminal` + `dbus-x11`, no recommended extras) and KasmVNC (the `.deb` for the image's Ubuntu release from KasmVNC's GitHub releases, pinned version, checksum verified).
-- [x] KasmVNC runs as the `agent` user under a systemd unit (`agent-vm-desktop`), on display `:1`, listening on `127.0.0.1:8444` only. Phones reach it through `tailscale serve`, not a tailnet listener.
-- [x] A random desktop password per VM, generated on the VM at setup, stored mode 600 in `~/.config/agent-vm/desktop-password`. The CLI reads it over SSH to show it; it never goes in cloud-init user data.
+- [x] KasmVNC runs as the `agent` user under a systemd unit (`convoy-desktop`), on display `:1`, listening on `127.0.0.1:8444` only. Phones reach it through `tailscale serve`, not a tailnet listener.
+- [x] A random desktop password per VM, generated on the VM at setup, stored mode 600 in `~/.config/convoy/desktop-password`. The CLI reads it over SSH to show it; it never goes in cloud-init user data.
 - [x] Setup takes a minute or two longer (about 95s in testing). Show "installing desktop" as its own phase in the TUI. (Every setup step now shows in the VM's row, e.g. "adding desktop".)
 - [x] Firefox (or Chromium) on the desktop so the user can browse alongside agents. agent-browser's Chromium can also run headed on this display (`DISPLAY=:1`), so the user watches what the agent does.
 
@@ -60,7 +60,7 @@ A desktop needs a bigger VM: plan on **4 GB RAM minimum** (`s-2vcpu-4gb`, ~$24/m
 - The desktop runs as `agent`, which has passwordless sudo, so desktop access equals full control of the VM. Say so in the docs.
 - Agents can read the desktop password file (it's in `agent`'s home). Acceptable, since agents already run as `agent`; note it in the docs.
 - Snapshots of a sleeping VM include the desktop password. A woken VM keeps the same password.
-- Pin the KasmVNC version and verify its checksum; automatic security updates cover the Ubuntu packages but not the `.deb`, so the update path is a later re-install (D4) or a version bump in agent-vm.
+- Pin the KasmVNC version and verify its checksum; automatic security updates cover the Ubuntu packages but not the `.deb`, so the update path is a later re-install (D4) or a version bump in convoy.
 
 ## 5. Testing
 

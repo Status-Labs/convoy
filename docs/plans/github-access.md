@@ -31,7 +31,7 @@ Not doing SSH agent forwarding by default: it doesn't serve unattended agents, a
 - [x] `.env.example`: `GITHUB_TOKEN=` with a short note on creating a fine-grained token (repos, Contents read/write, Pull requests read/write if agents should open PRs, an expiry).
 - [x] `AgentKeys` gets `github?: string`; `agentKeysFromEnv` reads `GITHUB_TOKEN`.
 - [x] `keySetupScript` adds, when a token is present:
-  - write it to `~/.config/agent-vm/github-token` (mode 600),
+  - write it to `~/.config/convoy/github-token` (mode 600),
   - `gh auth login --with-token < "$keys/github-token"`,
   - `gh auth setup-git`, so plain `git clone`/`push` over https use it and agents need nothing special.
 - [x] Sent over SSH stdin like the other keys, never in cloud-init user data.

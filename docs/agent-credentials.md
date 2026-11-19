@@ -57,7 +57,7 @@ OpenAI documents copying `~/.codex/auth.json` to a headless machine, but its [CI
 ## How keys are stored on the VM
 
 - Keys are sent over SSH on stdin after setup finishes. They never go into the cloud provider's VM setup data (cloud-init user data), which the provider stores and any process on the VM can read from the metadata service.
-- They're saved in `~/.config/agent-vm/` on the VM, readable only by the `agent` user (mode 600).
+- They're saved in `~/.config/convoy/` on the VM, readable only by the `agent` user (mode 600).
 - **Claude Code** reads the key through `apiKeyHelper` in `~/.claude/settings.json`, so the key isn't in the environment of every process, and Claude Code doesn't ask to approve it.
 - **Codex** stores it with `codex login --with-api-key`.
 - **OpenCode** reads the key files through `{file:...}` references in `~/.config/opencode/opencode.json`.
