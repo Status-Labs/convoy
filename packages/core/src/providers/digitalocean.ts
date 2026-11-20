@@ -9,7 +9,7 @@ import {
   type VmProvider,
   type VmStatus,
 } from "../types";
-import { requireEnv } from "./shared";
+import { requireEnv, VM_NAME_PREFIX } from "./shared";
 
 const API = "https://api.digitalocean.com/v2";
 
@@ -52,6 +52,9 @@ const ASLEEP_ID = "asleep-";
 // like sleep snapshots, and the VM they came from.
 const SNAPSHOT_TAG = "convoy-snapshot";
 const FROM_TAG = "convoy-from:";
+// Untagged snapshots named like our VMs are ours too: from before snapshots
+// were tagged, or before the rename from agent-vm, or a half-finished snapshot.
+const OUR_NAME_PREFIXES = [VM_NAME_PREFIX, "agent-vm-"];
 // Snapshot storage, per GB-month: https://docs.digitalocean.com/products/snapshots/details/pricing/
 const SNAPSHOT_GB_MONTH = 0.06;
 const HOURS_PER_MONTH = 730;
@@ -81,6 +84,8 @@ interface DoSnapshot {
   size_gigabytes: number;
   min_disk_size: number;
   tags: string[] | null;
+  /** "snapshot", "backup" or "custom". */
+  type?: string;
 }
 
 interface DoAction {
@@ -282,8 +287,17 @@ export class DigitalOceanProvider implements VmProvider {
   }
 
   async listSnapshots(): Promise<Snapshot[]> {
-    const { images } = await this.request<{ images: DoSnapshot[] }>("GET", `/images?tag_name=${SNAPSHOT_TAG}&per_page=200`);
-    return images.filter((i) => i.status === "available").map(toSnapshot);
+    const [tagged, own] = await Promise.all([
+      this.request<{ images: DoSnapshot[] }>("GET", `/images?tag_name=${SNAPSHOT_TAG}&per_page=200`),
+      this.request<{ images: DoSnapshot[] }>("GET", `/images?private=true&per_page=200`),
+    ]);
+    const untagged = own.images.filter(
+      (i) => i.type === "snapshot" && !i.tags?.length && OUR_NAME_PREFIXES.some((p) => i.name.startsWith(p)),
+    );
+    return [
+      ...tagged.images.filter((i) => i.status === "available").map(toSnapshot),
+      ...untagged.filter((i) => i.status === "available").map((i) => ({ ...toSnapshot(i), untagged: true })),
+    ];
   }
 
   async deleteSnapshot(id: string): Promise<void> {

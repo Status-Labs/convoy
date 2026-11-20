@@ -500,12 +500,12 @@ program
   .action(async () => {
     const { snapshots, errors } = await fleet().listSnapshots();
     for (const { provider, message } of errors) console.error(`Couldn't list ${provider} snapshots: ${message}`);
-    const shown = selectedProject ? snapshots.filter((s) => s.project === selectedProject) : snapshots;
+    const shown = selectedProject ? snapshots.filter((s) => s.project === selectedProject || s.untagged) : snapshots;
     if (shown.length === 0) return console.log("No snapshots. Take one with: pnpm cli snapshot <vm>");
     console.table(
       shown.map((s) => ({
         name: s.name,
-        from: s.sourceVm ?? "",
+        from: s.untagged ? "(untagged)" : (s.sourceVm ?? ""),
         project: s.project ?? "",
         provider: s.provider,
         size: s.size ?? "",

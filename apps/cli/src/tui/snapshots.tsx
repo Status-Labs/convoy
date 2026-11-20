@@ -93,7 +93,13 @@ export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, on
                     </Text>
                   </Box>
                   <Box width={COLUMNS.from}>
-                    <Text wrap="truncate-end">{s.sourceVm ?? "—"}</Text>
+                    {s.untagged ? (
+                      <Text color="yellow" wrap="truncate-end">
+                        untagged
+                      </Text>
+                    ) : (
+                      <Text wrap="truncate-end">{s.sourceVm ?? "—"}</Text>
+                    )}
                   </Box>
                   <Box width={COLUMNS.project}>
                     <Text wrap="truncate-end" dimColor={!s.project}>
@@ -121,6 +127,11 @@ export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, on
         {confirmDelete ? (
           <Text color="yellow">
             Delete snapshot {confirmDelete.name}? VMs launched from it are unaffected. <Text bold>y/N</Text>
+          </Text>
+        ) : list[current]?.untagged ? (
+          <Text dimColor>
+            Not tagged by Convoy (an older or half-finished snapshot), so its VM, size and project are unknown. Still billed:{" "}
+            <Text bold color="cyan">d</Text> deletes it.
           </Text>
         ) : list[current] ? (
           <Text dimColor>

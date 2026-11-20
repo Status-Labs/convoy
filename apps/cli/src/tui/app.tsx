@@ -164,7 +164,8 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   const refreshSnapshots = useCallback(async () => {
     try {
       const { snapshots: list, errors } = await fleet.listSnapshots();
-      setSnapshots(list.filter((s) => project === null || s.project === project));
+      // Untagged snapshots have no project, so they show in every project to be cleaned up.
+      setSnapshots(list.filter((s) => project === null || s.project === project || s.untagged));
       if (errors.length > 0) {
         setMessage({ text: `Couldn't list some snapshots. ${errors.map((e) => `${e.provider}: ${e.message}`).join("; ")}`, tone: "error" });
       }

@@ -117,6 +117,11 @@ export interface Snapshot {
   createdAt: string;
   /** Storage cost per month, USD, or null when unknown. */
   monthly: number | null;
+  /**
+   * Not tagged by Convoy, but named like one of its VMs: from an older version,
+   * or a snapshot whose tagging failed. Still billed, so it's listed to delete.
+   */
+  untagged?: boolean;
 }
 
 /** The region, size and image new VMs get unless the user picks others. */
