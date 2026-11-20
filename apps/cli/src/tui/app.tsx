@@ -497,11 +497,20 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     const id = row.id!;
     setDeleting((current) => new Set(current).add(id));
     try {
+      // Listed before the VM goes, while its name is still known to be its own.
+      const snapshots = row.vm ? await fleet.snapshotsOf(row.vm) : [];
       if (row.vm?.status === "running" && row.vm.publicIp) await leaveTailnet(row.vm.publicIp);
       await fleet.cloud(row.vm?.provider ?? row.job!.provider).vms.provider.deleteVm(id);
       if (row.vm?.publicIp) forgetHostKey(row.vm.publicIp);
       setJobs(({ [row.name]: _, ...rest }) => rest);
-      setMessage({ text: `Deleted ${row.name}.`, tone: "info" });
+      const failed = await fleet.deleteSnapshots(snapshots);
+      const gone = snapshots.length - failed.length;
+      const deleted = `Deleted ${row.name}${gone > 0 ? ` and ${gone} snapshot${gone === 1 ? "" : "s"}` : ""}.`;
+      setMessage(
+        failed.length > 0
+          ? { text: `${deleted} Couldn't delete ${failed.map((f) => `${f.snapshot.name} (${f.message})`).join(", ")}.`, tone: "error" }
+          : { text: deleted, tone: "info" },
+      );
       void refresh();
     } catch (err) {
       setDeleting((current) => {
@@ -729,7 +738,8 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       <Box marginTop={1}>
         {confirmDelete ? (
           <Text color="yellow">
-            Delete {confirmDelete.name}? This destroys the VM and everything on it. <Text bold>y/N</Text>
+            Delete {confirmDelete.name}? This destroys the VM, everything on it and any snapshots taken from it.{" "}
+            <Text bold>y/N</Text>
           </Text>
         ) : confirmSnapshot ? (
           <Text color="yellow">
