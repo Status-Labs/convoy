@@ -45,7 +45,8 @@ export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, on
     if (key.downArrow || input === "j") return setCursor(Math.min(list.length - 1, current + 1));
     const snapshot = list[current];
     if (!snapshot || deleting.has(snapshot.id)) return;
-    if (key.return) return onLaunch(snapshot);
+    // An untagged snapshot doesn't record its size, so launching needs the CLI's --size.
+    if (key.return && !snapshot.untagged) return onLaunch(snapshot);
     if (input === "d") return setConfirmDelete(snapshot);
   });
 
@@ -131,7 +132,8 @@ export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, on
         ) : list[current]?.untagged ? (
           <Text dimColor>
             Not tagged by Convoy (an older or half-finished snapshot), so its VM, size and project are unknown. Still billed:{" "}
-            <Text bold color="cyan">d</Text> deletes it.
+            <Text bold color="cyan">d</Text> deletes it. To launch a copy, use{" "}
+            <Text bold>pnpm cli create --snapshot {list[current]!.name} --size &lt;size&gt;</Text>.
           </Text>
         ) : list[current] ? (
           <Text dimColor>
@@ -144,7 +146,7 @@ export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, on
       </Box>
 
       <Box marginTop={1} gap={2}>
-        <Key k="⏎" label="launch copy" />
+        {!list[current]?.untagged && <Key k="⏎" label="launch copy" />}
         <Key k="d" label="delete" />
         <Key k="r" label="refresh" />
         <Key k="tab" label="VMs" />
