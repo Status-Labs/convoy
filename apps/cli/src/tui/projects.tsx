@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { TextInput } from "@inkjs/ui";
 import { formatCost, isValidProjectName, parseRepo, repoSlug } from "@convoy/core";
@@ -22,7 +22,7 @@ export interface ProjectsProps {
   onCreate: (project: string) => void;
   onSaveRepos: (project: string, repos: string[]) => void;
   onDelete: (project: string) => void;
-  /** True while typing a name or repos, so app-wide keys stay off. */
+  /** True while typing a name or repos or confirming, so app-wide keys stay off. */
   onEditing: (editing: boolean) => void;
 }
 
@@ -36,12 +36,13 @@ export function Projects({ projects, current, width, onShow, onCreate, onSaveRep
   const [mode, setModeState] = useState<Mode>({ kind: "list" });
   const [error, setError] = useState<string | null>(null);
   const at = Math.min(cursor, Math.max(0, projects.length - 1));
+  useEffect(() => () => onEditing(false), []);
   const selected = projects[at];
 
   const setMode = (next: Mode) => {
     setModeState(next);
     setError(null);
-    onEditing(next.kind === "new" || next.kind === "repos");
+    onEditing(next.kind !== "list");
   };
 
   useInput(

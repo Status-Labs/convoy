@@ -55,6 +55,11 @@ const FROM_TAG = "convoy-from:";
 // Untagged snapshots named like our VMs are ours too: from before snapshots
 // were tagged, or before the rename from agent-vm, or a half-finished snapshot.
 const OUR_NAME_PREFIXES = [VM_NAME_PREFIX, "agent-vm-"];
+// Sleep and snapshot images are tagged only after DigitalOcean finishes them, which can
+// take a while; younger untagged images may be ours mid-way, so they aren't offered.
+const UNTAGGED_GRACE_MS = 60 * 60_000;
+// Safety stop for paging (200 per page).
+const MAX_PAGES = 25;
 // Snapshot storage, per GB-month: https://docs.digitalocean.com/products/snapshots/details/pricing/
 const SNAPSHOT_GB_MONTH = 0.06;
 const HOURS_PER_MONTH = 730;
@@ -288,16 +293,33 @@ export class DigitalOceanProvider implements VmProvider {
 
   async listSnapshots(): Promise<Snapshot[]> {
     const [tagged, own] = await Promise.all([
-      this.request<{ images: DoSnapshot[] }>("GET", `/images?tag_name=${SNAPSHOT_TAG}&per_page=200`),
-      this.request<{ images: DoSnapshot[] }>("GET", `/images?private=true&per_page=200`),
+      this.images(`/images?tag_name=${SNAPSHOT_TAG}&per_page=200`),
+      // Every private image in the account (backups and custom images too), so this one pages.
+      this.images(`/images?private=true&per_page=200`),
     ]);
-    const untagged = own.images.filter(
-      (i) => i.type === "snapshot" && !i.tags?.length && OUR_NAME_PREFIXES.some((p) => i.name.startsWith(p)),
+    const untagged = own.filter(
+      (i) =>
+        i.type === "snapshot" &&
+        !i.tags?.length &&
+        OUR_NAME_PREFIXES.some((p) => i.name.startsWith(p)) &&
+        Date.now() - Date.parse(i.created_at) > UNTAGGED_GRACE_MS,
     );
     return [
-      ...tagged.images.filter((i) => i.status === "available").map(toSnapshot),
+      ...tagged.filter((i) => i.status === "available").map(toSnapshot),
       ...untagged.filter((i) => i.status === "available").map((i) => ({ ...toSnapshot(i), untagged: true })),
     ];
+  }
+
+  /** Every page of an /images listing. */
+  private async images(path: string): Promise<DoSnapshot[]> {
+    const all: DoSnapshot[] = [];
+    let next: string | undefined = path;
+    for (let page = 0; next && page < MAX_PAGES; page++) {
+      const res: { images: DoSnapshot[]; links?: { pages?: { next?: string } } } = await this.request("GET", next);
+      all.push(...res.images);
+      next = res.links?.pages?.next?.replace(API, "");
+    }
+    return all;
   }
 
   async deleteSnapshot(id: string): Promise<void> {

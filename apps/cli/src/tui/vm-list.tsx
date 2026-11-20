@@ -108,6 +108,29 @@ function money(value: number | null | undefined, format: (n: number) => string):
   return value === undefined || value === null ? "—" : format(value);
 }
 
+/**
+ * Which lines of a list to show in `room` lines so line `at` is visible. When lines are cut
+ * off, a "more" indicator takes the first or last line of the room. A heading (isRow false)
+ * just above the window is pulled in with its first row when the selection still fits.
+ */
+export function scrollWindow(isRow: boolean[], at: number, room: number): { start: number; end: number } {
+  const n = isRow.length;
+  if (n <= room) return { start: 0, end: n };
+  const windowAt = (top: number) => {
+    const start = top + (top > 0 ? 1 : 0);
+    const end = Math.min(n, top + room - (n - top - room > 0 ? 1 : 0));
+    return { top, start, end, fits: at >= start && at < end };
+  };
+  let view = windowAt(Math.min(Math.max(0, at - Math.floor(room / 2)), n - room));
+  while (!view.fits && at < view.start && view.top > 0) view = windowAt(view.top - 1);
+  while (!view.fits && at >= view.end && view.top < n - room) view = windowAt(view.top + 1);
+  if (view.top > 0 && isRow[view.start] && !isRow[view.start - 1]) {
+    const up = windowAt(view.top - 1);
+    if (up.fits) view = up;
+  }
+  return { start: view.start, end: view.end };
+}
+
 export interface VmListProps {
   rows: Row[];
   selected: Row | undefined;
@@ -190,22 +213,19 @@ export function VmList({ rows, selected, width, height, compact, grouped, provid
     : rows.map((row) => ({ key: row.key, node: line(row), row }));
   const room = Math.max(3, height - (header ? 1 : 0));
   const at = Math.max(0, lines.findIndex((l) => l.row === selected));
-  let top = Math.min(Math.max(0, at - Math.floor(room / 2)), Math.max(0, lines.length - room));
-  // A group heading just above the window stays visible with its first row.
-  if (top > 0 && lines[top]?.row && !lines[top - 1]?.row && at - top < room - 1) top -= 1;
-  const above = top;
-  const below = Math.max(0, lines.length - top - room);
-  // Indicators take a line each, from the window.
-  const shown = lines.slice(top + (above > 0 ? 1 : 0), top + room - (below > 0 ? 1 : 0));
+  const view = scrollWindow(lines.map((l) => Boolean(l.row)), at, room);
+  const above = view.start;
+  const below = Math.max(0, lines.length - view.end);
+  const shown = lines.slice(view.start, view.end);
 
   return (
     <Box flexDirection="column">
       {header}
-      {above > 0 ? <Text dimColor>{`  ↑ ${above + 1} more`}</Text> : null}
+      {above > 0 ? <Text dimColor>{`  ↑ ${above} more`}</Text> : null}
       {shown.map((l) => (
         <Box key={l.key}>{l.node}</Box>
       ))}
-      {below > 0 ? <Text dimColor>{`  ↓ ${below + 1} more`}</Text> : null}
+      {below > 0 ? <Text dimColor>{`  ↓ ${below} more`}</Text> : null}
     </Box>
   );
 }

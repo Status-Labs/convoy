@@ -75,6 +75,7 @@ export function LaunchForm({ fleet, initial, keys, project, repos, onLaunch, onC
   const [count, setCount] = useState(1);
   const [cursor, setCursor] = useState(0);
   const [editing, setEditing] = useState<Field | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [regions, setRegions] = useState<Loadable<Region[]>>({ state: "loading" });
   const [sizes, setSizes] = useState<Loadable<Size[]>>({ state: "loading" });
   const cloud = fleet.cloud(providerName);
@@ -118,6 +119,8 @@ export function LaunchForm({ fleet, initial, keys, project, repos, onLaunch, onC
         return setEditing(field);
       }
       if (key.return) {
+        // The size is checked against the region before launching.
+        if (sizes.state === "loading") return setNote("Still checking which sizes the region has; one moment.");
         if (sizeMissing) return (setCursor(FIELDS.indexOf("size")), setEditing("size"));
         onLaunch({ provider: providerName, region, size, tools: usable, signIn, ...extras }, count);
       }
@@ -254,6 +257,11 @@ export function LaunchForm({ fleet, initial, keys, project, repos, onLaunch, onC
               </Text>
             ) : null}
           </Box>
+          {note && sizes.state === "loading" ? (
+            <Box paddingLeft={2}>
+              <Text color="yellow">{note}</Text>
+            </Box>
+          ) : null}
           <Box marginTop={1}>
             <KeyBar
               local={[

@@ -19,6 +19,7 @@ import {
   type Fleet,
   type FleetSnapshot,
   type FleetVm,
+  snapshotsTakenFrom,
   type SignInMode,
   type Vm,
 } from "@convoy/core";
@@ -112,6 +113,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   const [filter, setFilter] = useState("");
   const [filtering, setFiltering] = useState(false);
   const [projectsEditing, setProjectsEditing] = useState(false);
+  const [snapshotConfirming, setSnapshotConfirming] = useState(false);
   const [snapshotCursor, setSnapshotCursor] = useState<FleetSnapshot | undefined>(undefined);
   // Sleep/wake in progress, by VM name (waking can change the VM's id): the current step.
   const [busy, setBusy] = useState<Record<string, string>>({});
@@ -162,16 +164,22 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   }, [refresh]);
 
   // The inspector and tab counts use snapshots too, so they load in the background.
+  const lastSnapshotError = useRef("");
   const refreshSnapshots = useCallback(async () => {
     try {
       const { snapshots: found, errors } = await fleet.listSnapshots();
       setAllSnapshots(found);
-      if (errors.length > 0) {
-        setMessage({ text: `Couldn't list some snapshots. ${errors.map((e) => `${e.provider}: ${e.message}`).join("; ")}`, tone: "error" });
+      // This runs every 30s on every tab, so the same error is shown once, not over newer messages.
+      const text = errors.map((e) => `${providerLabels[e.provider] ?? e.provider}: ${e.message}`).join("; ");
+      if (text && text !== lastSnapshotError.current) {
+        setMessage({ text: `Couldn't list some snapshots. ${text}`, tone: "error" });
       }
+      lastSnapshotError.current = text;
     } catch (err) {
       setAllSnapshots((current) => current ?? []);
-      setMessage({ text: errorText(err), tone: "error" });
+      const text = errorText(err);
+      if (text !== lastSnapshotError.current) setMessage({ text: `Couldn't list snapshots. ${text}`, tone: "error" });
+      lastSnapshotError.current = text;
     }
   }, [fleet]);
 
@@ -211,10 +219,15 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   // Gone (deleted elsewhere) closes the details.
   const detailRow = detailName ? allRows.find((r) => r.name === detailName && r.vm) : undefined;
   const tabSnapshots = allSnapshots?.filter((s) => project === null || s.project === project || s.untagged) ?? null;
+  // The same matching delete uses, so the inspector's count is what `d` would remove.
   const snapshotsOf = (row: Row | undefined) =>
     !row?.vm || allSnapshots === null
       ? null
-      : allSnapshots.filter((s) => !s.untagged && s.provider === row.vm!.provider && s.sourceVm === row.vm!.name);
+      : snapshotsTakenFrom(
+          row.vm,
+          allSnapshots.filter((s) => s.provider === row.vm!.provider),
+          (list ?? []).filter((vm) => vm.provider === row.vm!.provider),
+        );
 
   const knownProjects = [...new Set([...savedProjects, ...(list ?? []).flatMap((vm) => (vm.project ? [vm.project] : []))])].sort();
   const projectSummaries: ProjectSummary[] = knownProjects.map((name) => {
@@ -665,7 +678,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         return setOverlay({ kind: "snapshot", row });
       }
     },
-    { isActive: overlay === null && !detailRow && !filtering && !projectsEditing },
+    { isActive: overlay === null && !detailRow && !filtering && !projectsEditing && !snapshotConfirming },
   );
 
   // Questions answered with one key.
@@ -837,6 +850,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         onLaunch={(snapshot) => void launchSnapshot(snapshot)}
         onDelete={(snapshot) => void deleteSnapshot(snapshot)}
         onCursor={setSnapshotCursor}
+        onConfirming={setSnapshotConfirming}
         active
       />
     );

@@ -24,6 +24,18 @@ export interface FleetList {
   errors: { provider: string; message: string }[];
 }
 
+/**
+ * Snapshots taken from a VM, which go when it's deleted: ones tagged with its name, and
+ * untagged ones named `<vm>-YYYYMMDD-HHMM` like `snapshot` names them. Snapshots only
+ * record the VM's name, so if another VM on the same provider has that name too, none
+ * match rather than guessing. `snapshots` and `vms` are from that VM's provider.
+ */
+export function snapshotsTakenFrom<S extends Snapshot>(vm: Vm, snapshots: S[], vms: Vm[]): S[] {
+  if (vms.some((other) => other.name === vm.name && other.id !== vm.id)) return [];
+  const stamped = new RegExp(`^${vm.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d{8}-\\d{4}$`);
+  return snapshots.filter((s) => (s.untagged ? stamped.test(s.name) : s.sourceVm === vm.name));
+}
+
 /** Agent VMs across every enabled provider. */
 export class Fleet {
   readonly clouds: Cloud[];
@@ -91,21 +103,12 @@ export class Fleet {
     return { vm, cloud: this.cloud(vm.provider) };
   }
 
-  /**
-   * Snapshots taken from a VM, which go when it's deleted: ones tagged with
-   * its name, and untagged ones named `<vm>-YYYYMMDD-HHMM` like `snapshot`
-   * names them. Snapshots only record the VM's name, so if another VM on the
-   * same provider has that name too, nothing is returned rather than guessing.
-   */
+  /** Snapshots taken from a VM, fresh from its provider; see snapshotsTakenFrom. */
   async snapshotsOf(vm: FleetVm): Promise<FleetSnapshot[]> {
     const cloud = this.cloud(vm.provider);
     if (!cloud.vms.provider.listSnapshots) return [];
     const [vms, snapshots] = await Promise.all([cloud.vms.listVms(), cloud.vms.provider.listSnapshots()]);
-    if (vms.some((other) => other.name === vm.name && other.id !== vm.id)) return [];
-    const stamped = new RegExp(`^${vm.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d{8}-\\d{4}$`);
-    return snapshots
-      .filter((s) => (s.untagged ? stamped.test(s.name) : s.sourceVm === vm.name))
-      .map((s) => ({ ...s, provider: vm.provider }));
+    return snapshotsTakenFrom(vm, snapshots, vms).map((s) => ({ ...s, provider: vm.provider }));
   }
 
   /** Deletes snapshots, carrying on past failures; returns the ones that couldn't be deleted. */

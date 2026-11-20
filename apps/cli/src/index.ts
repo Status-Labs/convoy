@@ -20,6 +20,7 @@ import {
   monthToDateCost,
   DEFAULT_AUTOSLEEP_MINUTES,
   IDLE_CHECK_MS,
+  type FleetSnapshot,
   formatMinutes,
   parseIdleMinutes,
   parseRepo,
@@ -536,9 +537,18 @@ program
   .command("delete <vm>")
   .description("Delete an agent VM (id or name) and the snapshots taken from it")
   .option("-y, --yes", "skip confirmation")
+  .option("--keep-snapshots", "delete only the VM, keeping snapshots taken from it")
   .action(async (idOrName: string, opts) => {
     const { vm, cloud } = await fleet().findVm(idOrName);
-    const snapshots = await fleet().snapshotsOf(vm);
+    let snapshots: FleetSnapshot[] = [];
+    if (!opts.keepSnapshots) {
+      try {
+        snapshots = await fleet().snapshotsOf(vm);
+      } catch (err) {
+        // Not being able to list snapshots shouldn't keep a billed VM around.
+        console.warn(`Couldn't check for ${vm.name}'s snapshots (${(err as Error).message}); deleting only the VM.`);
+      }
+    }
     if (snapshots.length > 0) {
       console.log(`Its snapshots go too:`);
       for (const s of snapshots) console.log(`  ${s.name} (${s.sizeGb} GB${s.monthly === null ? "" : `, ${formatCost(s.monthly)}/mo`})`);

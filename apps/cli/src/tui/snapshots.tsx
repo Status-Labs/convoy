@@ -15,6 +15,8 @@ export interface SnapshotListProps {
   onCursor: (snapshot: FleetSnapshot | undefined) => void;
   /** Off while another panel (help) has the keys. */
   active: boolean;
+  /** True while a delete is being confirmed, so app-wide keys stay off. */
+  onConfirming: (confirming: boolean) => void;
 }
 
 function age(iso: string): string {
@@ -27,9 +29,14 @@ function age(iso: string): string {
 const COLUMNS = { name: 32, from: 17, project: 11, data: 8, regions: 10, cost: 9 };
 
 /** Saved snapshots: launch a copy, or delete. */
-export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, onDelete, onCursor, active }: SnapshotListProps) {
+export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, onDelete, onCursor, active, onConfirming }: SnapshotListProps) {
   const [cursor, setCursor] = useState(0);
-  const [confirmDelete, setConfirmDelete] = useState<FleetSnapshot | null>(null);
+  const [confirmDelete, setConfirmDeleteState] = useState<FleetSnapshot | null>(null);
+  const setConfirmDelete = (snapshot: FleetSnapshot | null) => {
+    setConfirmDeleteState(snapshot);
+    onConfirming(snapshot !== null);
+  };
+  useEffect(() => () => onConfirming(false), []);
   const list = snapshots ?? [];
   const current = Math.min(cursor, list.length - 1);
   const selected = list[current];
