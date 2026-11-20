@@ -13,7 +13,7 @@ import {
   type VmInfo,
 } from "@convoy/core";
 import { streamMetrics, vmInfo } from "../ssh";
-import { Key } from "./key";
+import { Key } from "./ui";
 
 // About a minute and a half of history at one sample every 2s.
 const HISTORY = 48;
@@ -34,11 +34,11 @@ export interface DetailProps {
 
 type Loadable<T> = { state: "loading" } | { state: "error"; error: string } | { state: "ready"; value: T };
 
-function sparkline(values: number[], max = 100): string {
+export function sparkline(values: number[], max = 100): string {
   return values.map((v) => SPARK[Math.min(SPARK.length - 1, Math.max(0, Math.round((v / max) * (SPARK.length - 1))))]).join("");
 }
 
-function percent(used: number, total: number): number {
+export function percent(used: number, total: number): number {
   return total > 0 ? (used / total) * 100 : 0;
 }
 
@@ -124,7 +124,7 @@ export function Detail({ vm, providerLabel, now, onBack, onConnect, onTmux, onSi
 
       {!ip ? (
         <Box marginTop={1}>
-          <Text dimColor>{vm.status === "asleep" ? "Asleep: wake it (w on the list) to see what's on it." : "Not running."}</Text>
+          <Text dimColor>{vm.status === "asleep" ? "Asleep: wake it (s on the list) to see what's on it." : "Not running."}</Text>
         </Box>
       ) : (
         <>

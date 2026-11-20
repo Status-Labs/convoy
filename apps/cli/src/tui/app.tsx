@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput } from "ink";
-import { Spinner } from "@inkjs/ui";
+import { Box, Text, useApp, useInput, useWindowSize } from "ink";
+import { Spinner, TextInput } from "@inkjs/ui";
 import {
   DEFAULT_AUTOSLEEP_MINUTES,
   DESKTOP_USER,
@@ -27,6 +27,7 @@ import { AutoSleeper } from "../autosleep";
 import {
   loadAutosleep,
   loadProjectRepos,
+  removeProject,
   saveAutosleep,
   saveCurrentProject,
   saveLaunchPrefs,
@@ -45,39 +46,27 @@ import {
   waitForCloudInit,
 } from "../ssh";
 import { Detail } from "./detail";
-import { Key } from "./key";
+import { Help } from "./help";
+import { Inspector } from "./inspector";
 import { LaunchForm } from "./launch-form";
 import { ProjectPicker } from "./project-picker";
+import { Projects, type ProjectSummary } from "./projects";
 import { SnapshotList } from "./snapshots";
-
-type Phase = "creating" | "booting" | "installing" | "ready" | "failed";
-
-// A VM launched in this session, tracked through setup.
-interface Job {
-  name: string;
-  phase: Phase;
-  provider: string;
-  region: string;
-  project: string | null;
-  vmId?: string;
-  /** Setup's current phase on the VM, e.g. "adding Claude Code". */
-  step?: string;
-}
-
-interface Row {
-  key: string;
-  name: string;
-  id?: string;
-  vm?: FleetVm;
-  job?: Job;
-  deleting: boolean;
-  /** Sleep/wake step in progress. */
-  busy?: string;
-  /** Minutes of idleness before auto-sleep, if on. */
-  autosleep?: number;
-}
-
-type Message = { text: string; tone: "info" | "success" | "error" } | null;
+import {
+  Header,
+  KeyBar,
+  MessageLine,
+  Modal,
+  ProgressLine,
+  Rule,
+  TABS,
+  WIDE_COLUMNS,
+  type KeyHint,
+  type Message,
+  type Tab,
+  type Tone,
+} from "./ui";
+import { groupRows, rowActivity, rowProject, rowTone, VmList, type Job, type Row } from "./vm-list";
 
 export interface AppProps {
   fleet: Fleet;
@@ -87,52 +76,59 @@ export interface AppProps {
   projects: { projects: string[]; current: string | null };
 }
 
+type Overlay =
+  | { kind: "launch" }
+  | { kind: "help" }
+  | { kind: "project" }
+  | { kind: "delete"; row: Row; snapshots: FleetSnapshot[] | null; error?: string }
+  | { kind: "sleep"; row: Row }
+  | { kind: "snapshot"; row: Row }
+  | null;
+
 const REFRESH_MS = 10_000;
 const SNAPSHOT_REFRESH_MS = 30_000;
 // Costs are computed locally from list prices, so they can tick between refreshes.
 const COST_TICK_MS = 5_000;
+const INSPECTOR_WIDTH = 46;
+const HOURS_PER_MONTH = 730;
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function age(iso: string): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60_000));
-  if (minutes < 60) return `${minutes}m`;
-  if (minutes < 48 * 60) return `${Math.floor(minutes / 60)}h`;
-  return `${Math.floor(minutes / 1440)}d`;
-}
-
 export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projects: initialProjects }: AppProps) {
   const { exit, suspendTerminal } = useApp();
+  const { columns } = useWindowSize();
   const [list, setList] = useState<FleetVm[] | null>(null);
+  const [allSnapshots, setAllSnapshots] = useState<FleetSnapshot[] | null>(null);
   const [autosleep, setAutosleep] = useState(loadAutosleep);
   const [jobs, setJobs] = useState<Record<string, Job>>({});
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState(0);
-  const [confirmDelete, setConfirmDelete] = useState<Row | null>(null);
-  const [confirmSleep, setConfirmSleep] = useState<Row | null>(null);
+  // By name: rows reorder as they're grouped, and a launch's row changes key when the provider lists it.
+  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("vms");
+  const [overlay, setOverlay] = useState<Overlay>(null);
+  const [inspectorOn, setInspectorOn] = useState(true);
+  const [filter, setFilter] = useState("");
+  const [filtering, setFiltering] = useState(false);
+  const [projectsEditing, setProjectsEditing] = useState(false);
+  const [snapshotCursor, setSnapshotCursor] = useState<FleetSnapshot | undefined>(undefined);
   // Sleep/wake in progress, by VM name (waking can change the VM's id): the current step.
   const [busy, setBusy] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<Message>(null);
-  const [picking, setPicking] = useState(false);
   const [launchPrefs, setLaunchPrefs] = useState(initialPrefs);
   // null = all projects.
   const [project, setProject] = useState(initialProjects.current);
   const [savedProjects, setSavedProjects] = useState(initialProjects.projects);
-  const [pickingProject, setPickingProject] = useState(false);
-  const [view, setView] = useState<"vms" | "snapshots">("vms");
-  const [snapshots, setSnapshots] = useState<FleetSnapshot[] | null>(null);
   const [deletingSnapshots, setDeletingSnapshots] = useState<Set<string>>(new Set());
-  const [confirmSnapshot, setConfirmSnapshot] = useState<Row | null>(null);
-  // The VM (by name: waking changes its id) whose detail view is open.
+  // The VM (by name: waking changes its id) whose full-screen details are open.
   const [detailName, setDetailName] = useState<string | null>(null);
-  const summary = [
-    fleet.clouds.map((c) => c.label).join(" + "),
-    `next: ${fleet.cloud(launchPrefs.provider).label} ${launchPrefs.region} ${launchPrefs.size}`,
-  ].join(" · ");
   const providerLabels = Object.fromEntries(fleet.clouds.map((c) => [c.name, c.label]));
   const [now, setNow] = useState(() => new Date());
+
+  const inner = Math.max(40, columns - 2);
+  const wide = columns >= WIDE_COLUMNS;
+  const showInspector = wide && inspectorOn;
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), COST_TICK_MS);
@@ -160,41 +156,36 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     return () => clearInterval(timer);
   }, [refresh]);
 
-  // Only while the Snapshots view is open, and less often than VMs.
+  // The inspector and tab counts use snapshots too, so they load in the background.
   const refreshSnapshots = useCallback(async () => {
     try {
-      const { snapshots: list, errors } = await fleet.listSnapshots();
-      // Untagged snapshots have no project, so they show in every project to be cleaned up.
-      setSnapshots(list.filter((s) => project === null || s.project === project || s.untagged));
+      const { snapshots: found, errors } = await fleet.listSnapshots();
+      setAllSnapshots(found);
       if (errors.length > 0) {
         setMessage({ text: `Couldn't list some snapshots. ${errors.map((e) => `${e.provider}: ${e.message}`).join("; ")}`, tone: "error" });
       }
     } catch (err) {
-      setSnapshots((current) => current ?? []);
+      setAllSnapshots((current) => current ?? []);
       setMessage({ text: errorText(err), tone: "error" });
     }
-  }, [fleet, project]);
+  }, [fleet]);
 
   useEffect(() => {
-    if (view !== "snapshots") return;
     void refreshSnapshots();
     const timer = setInterval(refreshSnapshots, SNAPSHOT_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [view, refreshSnapshots]);
+  }, [refreshSnapshots]);
 
   const updateJob = (name: string, patch: Partial<Job>) =>
     setJobs((current) => ({ ...current, [name]: { name, phase: "creating", ...current[name], ...patch } as Job }));
 
-  const inProject = (p: string | null) => project === null || p === project;
-  // Newly launched VMs show up before the provider lists them.
-  const listed = (list ?? []).filter((vm) => inProject(vm.project));
-  const listedNames = new Set(listed.map((vm) => vm.name));
-  const rows: Row[] = [
+  // Every VM and launch, in any project: the progress line and Projects tab use them all.
+  const listedNames = new Set((list ?? []).map((vm) => vm.name));
+  const allRows: Row[] = [
     ...Object.values(jobs)
-      .filter((job) => inProject(job.project))
       .filter((job) => !listedNames.has(job.name) && (job.phase === "creating" || job.phase === "booting"))
       .map((job) => ({ key: job.name, name: job.name, id: job.vmId, job, deleting: false })),
-    ...listed.map((vm) => ({
+    ...(list ?? []).map((vm) => ({
       key: vm.id,
       name: vm.name,
       id: vm.id,
@@ -205,9 +196,33 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       autosleep: autosleep[vm.name],
     })),
   ];
-  const current = Math.min(selected, rows.length - 1);
-  // Gone (deleted elsewhere) closes the detail view.
-  const detailRow = detailName ? rows.find((r) => r.name === detailName && r.vm) : undefined;
+  const inProject = (p: string | null) => project === null || p === project;
+  const projectRows = allRows.filter((row) => inProject(rowProject(row)));
+  const rows = filter ? projectRows.filter((row) => row.name.toLowerCase().includes(filter.toLowerCase())) : projectRows;
+  const grouped = project === null && new Set(rows.map(rowProject)).size > 1;
+  const ordered = grouped ? groupRows(rows).flatMap((g) => g.rows) : rows;
+  const selectedIndex = Math.max(0, ordered.findIndex((r) => r.name === selectedName));
+  const selected = ordered[selectedIndex];
+  // Gone (deleted elsewhere) closes the details.
+  const detailRow = detailName ? allRows.find((r) => r.name === detailName && r.vm) : undefined;
+  const tabSnapshots = allSnapshots?.filter((s) => project === null || s.project === project || s.untagged) ?? null;
+  const snapshotsOf = (row: Row | undefined) =>
+    !row?.vm || allSnapshots === null
+      ? null
+      : allSnapshots.filter((s) => !s.untagged && s.provider === row.vm!.provider && s.sourceVm === row.vm!.name);
+
+  const knownProjects = [...new Set([...savedProjects, ...(list ?? []).flatMap((vm) => (vm.project ? [vm.project] : []))])].sort();
+  const projectSummaries: ProjectSummary[] = knownProjects.map((name) => {
+    const inIt = allRows.filter((row) => rowProject(row) === name);
+    const tones: Partial<Record<Tone, number>> = {};
+    for (const row of inIt) tones[rowTone(row)] = (tones[rowTone(row)] ?? 0) + 1;
+    return {
+      name,
+      tones,
+      repos: loadProjectRepos(name),
+      cost: inIt.reduce((sum, row) => sum + (row.vm ? (monthToDateCost(row.vm, now) ?? 0) : 0), 0),
+    };
+  });
 
   const setStep = (name: string, step: string | null) =>
     setBusy(({ [name]: _, ...rest }) => (step ? { ...rest, [name]: step } : rest));
@@ -220,7 +235,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       if (event.kind === "sleeping") setStep(event.vm, "auto-sleeping");
       if (event.kind === "slept") {
         setStep(event.vm, null);
-        setMessage({ text: `${event.vm} was idle, so it's asleep now. Press w to wake it.`, tone: "info" });
+        setMessage({ text: `${event.vm} was idle, so it's asleep now. Press s to wake it.`, tone: "info" });
         void refresh();
       }
       if (event.kind === "error" && latest.current.busy[event.vm] === "auto-sleeping") {
@@ -256,7 +271,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     try {
       await fleet.cloud(vm.provider).vms.sleep(vm, (step) => setStep(vm.name, step));
       if (vm.publicIp) forgetHostKey(vm.publicIp);
-      setMessage({ text: `${vm.name} is asleep. Press w to wake it.`, tone: "success" });
+      setMessage({ text: `${vm.name} is asleep. Press s to wake it.`, tone: "success" });
     } catch (err) {
       setMessage({ text: `Couldn't put ${vm.name} to sleep: ${errorText(err)}`, tone: "error" });
     } finally {
@@ -292,10 +307,8 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   }
 
   async function launch(choice: LaunchPrefs, count: number) {
-    setPicking(false);
     setLaunchPrefs(choice);
     saveLaunchPrefs(choice);
-    setSelected(0);
     setMessage(null);
     for (let i = 0; i < count; i++) void launchOne(choice);
   }
@@ -314,8 +327,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   // A copy of a snapshot, into the current project (else the snapshot's).
   function launchSnapshot(snapshot: FleetSnapshot) {
     const into = project ?? snapshot.project;
-    setView("vms");
-    setSelected(0);
+    setTab("vms");
     setMessage(null);
     return track({
       provider: snapshot.provider,
@@ -397,7 +409,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         setStep(vm.name, "starting up");
         await waitForCloudInit(vm.publicIp);
       }
-      setMessage({ text: `Saved ${snapshot.name} (${snapshot.sizeGb} GB). Press tab to see snapshots and launch copies.`, tone: "success" });
+      setMessage({ text: `Saved ${snapshot.name} (${snapshot.sizeGb} GB). Press 2 to see snapshots and launch copies.`, tone: "success" });
       void refreshSnapshots();
     } catch (err) {
       setMessage({ text: `Couldn't snapshot ${vm.name}: ${errorText(err)}`, tone: "error" });
@@ -493,12 +505,11 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     setMessage(null);
   }
 
-  async function remove(row: Row) {
+  // Snapshots were listed before the VM goes, while its name was still known to be its own.
+  async function remove(row: Row, snapshots: FleetSnapshot[]) {
     const id = row.id!;
     setDeleting((current) => new Set(current).add(id));
     try {
-      // Listed before the VM goes, while its name is still known to be its own.
-      const snapshots = row.vm ? await fleet.snapshotsOf(row.vm) : [];
       if (row.vm?.status === "running" && row.vm.publicIp) await leaveTailnet(row.vm.publicIp);
       await fleet.cloud(row.vm?.provider ?? row.job!.provider).vms.provider.deleteVm(id);
       if (row.vm?.publicIp) forgetHostKey(row.vm.publicIp);
@@ -512,6 +523,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
           : { text: deleted, tone: "info" },
       );
       void refresh();
+      void refreshSnapshots();
     } catch (err) {
       setDeleting((current) => {
         const next = new Set(current);
@@ -522,156 +534,154 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     }
   }
 
-  useInput((input, key) => {
-    if (confirmDelete) {
-      if (input.toLowerCase() === "y") void remove(confirmDelete);
-      setConfirmDelete(null);
-      return;
-    }
-    if (confirmSleep) {
-      if (input.toLowerCase() === "y") void sleepVm(confirmSleep);
-      setConfirmSleep(null);
-      return;
-    }
-    if (confirmSnapshot) {
-      if (input.toLowerCase() === "y") void snapshotVm(confirmSnapshot);
-      setConfirmSnapshot(null);
-      return;
-    }
-    if (key.tab) {
-      setMessage(null);
-      return setView("snapshots");
-    }
 
-    if (input === "q" || key.escape) return exit();
-    if (input === "n") return setPicking(true);
-    if (input === "p") return setPickingProject(true);
-    if (input === "r") {
-      setMessage(null);
-      return void refresh();
-    }
-    if (key.upArrow || input === "k") return setSelected(Math.max(0, current - 1));
-    if (key.downArrow || input === "j") return setSelected(Math.min(rows.length - 1, current + 1));
+  function chooseProject(next: string | null) {
+    setProject(next);
+    saveCurrentProject(next);
+    setSelectedName(null);
+    setMessage(null);
+  }
 
-    const row = rows[current];
-    if (!row) return;
-    if (row.busy) return setMessage({ text: `${row.name} is ${row.busy}…`, tone: "info" });
-    const asleep = row.vm?.status === "asleep";
-    if (asleep && (key.return || input === "l" || input === "g" || input === "t")) {
-      return setMessage({ text: `${row.name} is asleep. Press w to wake it.`, tone: "info" });
+  async function askDelete(row: Row) {
+    setOverlay({ kind: "delete", row, snapshots: row.vm ? null : [] });
+    if (!row.vm) return;
+    try {
+      const snapshots = await fleet.snapshotsOf(row.vm);
+      setOverlay((o) => (o?.kind === "delete" && o.row === row ? { ...o, snapshots } : o));
+    } catch (err) {
+      setOverlay((o) => (o?.kind === "delete" && o.row === row ? { ...o, snapshots: [], error: errorText(err) } : o));
     }
-    if (key.rightArrow || input === "i") {
-      if (!row.vm) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
-      setMessage(null);
-      return setDetailName(row.name);
-    }
-    if (key.return) return void connect(row);
-    if (input === "t") return void connect(row, { tmux: true });
-    if (input === "l") return void signIn(row);
-    if (input === "g") return void openDesktop(row);
-    if (input === "w") {
-      if (!asleep) return setMessage({ text: `${row.name} isn't asleep.`, tone: "info" });
-      return void wakeVm(row);
-    }
-    if (input === "s") {
-      if (row.vm?.status !== "running") return setMessage({ text: `Only running VMs can sleep.`, tone: "info" });
-      if (!fleet.cloud(row.vm.provider).vms.provider.sleepKind) {
-        return setMessage({ text: `Sleep isn't supported on ${providerLabels[row.vm.provider]} yet.`, tone: "info" });
-      }
-      return setConfirmSleep(row);
-    }
-    if (input === "a") {
-      if (!row.vm || row.vm.status === "asleep") return setMessage({ text: `Auto-sleep is for running VMs.`, tone: "info" });
-      if (!fleet.cloud(row.vm.provider).vms.provider.sleepKind) {
-        return setMessage({ text: `Sleep isn't supported on ${providerLabels[row.vm.provider]} yet.`, tone: "info" });
-      }
-      return toggleAutosleep(row);
-    }
-    if (input === "b") {
-      if (row.vm?.status !== "running") return setMessage({ text: `Only running VMs can be snapshotted.`, tone: "info" });
-      if (!fleet.cloud(row.vm.provider).vms.provider.snapshotVm) {
-        return setMessage({ text: `Snapshots aren't supported on ${providerLabels[row.vm.provider]} yet.`, tone: "info" });
-      }
-      return setConfirmSnapshot(row);
-    }
-    if (input === "d") {
-      if (!row.id) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
-      if (!row.deleting) setConfirmDelete(row);
-    }
-  }, { isActive: !picking && !pickingProject && !detailRow && view === "vms" });
+  }
 
-  const header = (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box gap={2}>
-        <Text bold color="cyan">
-          convoy
-        </Text>
-        <Text bold>{project ?? "all projects"}</Text>
-        <Text dimColor>{summary}</Text>
-      </Box>
-      {listed.length > 0 ? <CostSummary vms={listed} now={now} /> : null}
-    </Box>
+  const sleepSupported = (vm: FleetVm) => Boolean(fleet.cloud(vm.provider).vms.provider.sleepKind);
+  const snapshotSupported = (vm: FleetVm) => Boolean(fleet.cloud(vm.provider).vms.provider.snapshotVm);
+
+  function vmKeys(row: Row | undefined): KeyHint[] {
+    if (!row || rowActivity(row)) return [];
+    const vm = row.vm;
+    if (vm?.status === "running") {
+      return [
+        ["⏎", "connect"],
+        ["t", "tmux"],
+        ["g", "desktop"],
+        ["l", "sign-in"],
+        ...(sleepSupported(vm) ? ([["s", "sleep"], ["a", row.autosleep ? "auto-sleep off" : "auto-sleep"]] as KeyHint[]) : []),
+        ...(snapshotSupported(vm) ? ([["b", "snapshot"]] as KeyHint[]) : []),
+        ["d", "delete"],
+      ];
+    }
+    if (vm?.status === "asleep") return [["s", "wake"], ["d", "delete"]];
+    return row.id ? [["d", "delete"]] : [];
+  }
+
+  // App-wide keys: tabs, help, quit, project switcher.
+  useInput(
+    (input, key) => {
+      if (input === "?") return setOverlay({ kind: "help" });
+      if (input === "q") return exit();
+      const byKey = TABS.find((t) => t.key === input);
+      if (byKey) return (setTab(byKey.id), setMessage(null));
+      if (key.tab) {
+        const next = TABS[(TABS.findIndex((t) => t.id === tab) + 1) % TABS.length]!;
+        return (setTab(next.id), setMessage(null));
+      }
+      if (input === "p") return setOverlay({ kind: "project" });
+      if (input === "r") {
+        setMessage(null);
+        void refresh();
+        return void refreshSnapshots();
+      }
+      if (key.escape) {
+        if (tab !== "vms") return setTab("vms");
+        if (filter) return setFilter("");
+        return setMessage(null);
+      }
+      if (tab !== "vms") return;
+
+      if (input === "n") return setOverlay({ kind: "launch" });
+      if (input === "N") {
+        setMessage({
+          text: `Launching like last time: ${providerLabels[launchPrefs.provider]} ${launchPrefs.region} ${launchPrefs.size}.`,
+          tone: "info",
+        });
+        return void launchOne(launchPrefs);
+      }
+      if (input === "/") return setFiltering(true);
+      if (input === "i") {
+        if (wide) return setInspectorOn((on) => !on);
+        if (selected?.vm) return setDetailName(selected.name);
+        return;
+      }
+      if (key.upArrow || input === "k") return setSelectedName(ordered[Math.max(0, selectedIndex - 1)]?.name ?? null);
+      if (key.downArrow || input === "j") return setSelectedName(ordered[Math.min(ordered.length - 1, selectedIndex + 1)]?.name ?? null);
+
+      const row = selected;
+      if (!row) return;
+      const activity = rowActivity(row);
+      if (activity) return setMessage({ text: `${row.name} is ${activity}…`, tone: "info" });
+      const vm = row.vm;
+      const asleep = vm?.status === "asleep";
+      const running = vm?.status === "running";
+      if (input === "d") {
+        if (!row.id) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
+        return void askDelete(row);
+      }
+      if (input === "s" || input === "w") {
+        if (asleep) return void wakeVm(row);
+        if (input === "w") return setMessage({ text: `${row.name} isn't asleep.`, tone: "info" });
+        if (!running) return setMessage({ text: `Only running VMs can sleep.`, tone: "info" });
+        if (!sleepSupported(vm)) return setMessage({ text: `Sleep isn't supported on ${providerLabels[vm.provider]} yet.`, tone: "info" });
+        return setOverlay({ kind: "sleep", row });
+      }
+      if (asleep && (key.return || ["l", "g", "t", "b", "a"].includes(input) || key.rightArrow)) {
+        return setMessage({ text: `${row.name} is asleep. Press s to wake it.`, tone: "info" });
+      }
+      if (!vm) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
+      if (key.rightArrow) return (setMessage(null), setDetailName(row.name));
+      if (key.return) return void connect(row);
+      if (input === "t") return void connect(row, { tmux: true });
+      if (input === "l") return void signIn(row);
+      if (input === "g") return void openDesktop(row);
+      if (input === "a") {
+        if (!running) return setMessage({ text: `Auto-sleep is for running VMs.`, tone: "info" });
+        if (!sleepSupported(vm)) return setMessage({ text: `Sleep isn't supported on ${providerLabels[vm.provider]} yet.`, tone: "info" });
+        return toggleAutosleep(row);
+      }
+      if (input === "b") {
+        if (!running) return setMessage({ text: `Only running VMs can be snapshotted.`, tone: "info" });
+        if (!snapshotSupported(vm)) return setMessage({ text: `Snapshots aren't supported on ${providerLabels[vm.provider]} yet.`, tone: "info" });
+        return setOverlay({ kind: "snapshot", row });
+      }
+    },
+    { isActive: overlay === null && !detailRow && !filtering && !projectsEditing },
   );
 
-  if (pickingProject) {
-    const known = [...new Set([...savedProjects, ...(list ?? []).flatMap((vm) => (vm.project ? [vm.project] : []))])];
-    const choose = (next: string | null) => {
-      setProject(next);
-      saveCurrentProject(next);
-      setPickingProject(false);
-      setSelected(0);
-      setMessage(null);
-    };
-    return (
-      <Box flexDirection="column" paddingX={1} paddingY={1}>
-        {header}
-        <ProjectPicker
-          projects={known.sort().map((name) => ({
-            name,
-            vms: (list ?? []).filter((vm) => vm.project === name).length,
-          }))}
-          totalVms={list?.length ?? 0}
-          current={project}
-          onPick={choose}
-          onCreate={(name) => {
-            setSavedProjects((current) => [...new Set([...current, name])]);
-            choose(name);
-          }}
-          repos={loadProjectRepos}
-          onSaveRepos={(name, repos) => {
-            saveProjectRepos(name, repos);
-            setSavedProjects((current) => [...new Set([...current, name])]);
-          }}
-          onCancel={() => setPickingProject(false)}
-        />
-      </Box>
-    );
-  }
+  // Questions answered with one key.
+  useInput(
+    (input, key) => {
+      if (!overlay || !("row" in overlay)) return;
+      const yes = input.toLowerCase() === "y";
+      if (overlay.kind === "delete") {
+        if (overlay.snapshots === null && !key.escape) return; // still checking
+        if (yes) void remove(overlay.row, overlay.snapshots ?? []);
+        else if (input === "k" && overlay.snapshots && overlay.snapshots.length > 0) void remove(overlay.row, []);
+      }
+      if (overlay.kind === "sleep" && yes) void sleepVm(overlay.row);
+      if (overlay.kind === "snapshot" && yes) void snapshotVm(overlay.row);
+      setOverlay(null);
+    },
+    { isActive: overlay !== null && "row" in overlay },
+  );
 
-  if (view === "snapshots") {
-    return (
-      <Box flexDirection="column" paddingX={1} paddingY={1}>
-        {header}
-        <SnapshotList
-          snapshots={snapshots}
-          providerLabels={providerLabels}
-          deleting={deletingSnapshots}
-          onLaunch={(snapshot) => void launchSnapshot(snapshot)}
-          onDelete={(snapshot) => void deleteSnapshot(snapshot)}
-          onRefresh={() => void refreshSnapshots()}
-          onBack={() => setView("vms")}
-          onQuit={exit}
-        />
-        {message ? (
-          <Box marginTop={1}>
-            <Text color={message.tone === "error" ? "red" : message.tone === "success" ? "green" : undefined}>
-              {message.text}
-            </Text>
-          </Box>
-        ) : null}
-      </Box>
-    );
-  }
+  useInput(
+    (_input, key) => {
+      if (key.escape) {
+        setFilter("");
+        setFiltering(false);
+      }
+    },
+    { isActive: filtering },
+  );
 
   if (detailRow) {
     return (
@@ -687,196 +697,300 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
           onSignIn={() => void signIn(detailRow)}
           onDesktop={() => void openDesktop(detailRow)}
         />
-        {message ? (
-          <Box marginTop={1}>
-            <Text color={message.tone === "error" ? "red" : message.tone === "success" ? "green" : undefined}>
-              {message.text}
+        <Box marginTop={1}>
+          <MessageLine message={message} />
+        </Box>
+      </Box>
+    );
+  }
+
+  const priced = projectRows.filter((row) => row.vm?.pricing);
+  const rate = priced.reduce((sum, row) => sum + (hourlyRate(row.vm!) ?? 0), 0);
+  const cost = priced.reduce((sum, row) => sum + (monthToDateCost(row.vm!, now) ?? 0), 0);
+  const storage = (tabSnapshots ?? []).reduce((sum, s) => sum + (s.monthly ?? 0), 0);
+  const headerRight =
+    tab === "snapshots" ? (
+      <Text>
+        <Text dimColor>{tabSnapshots?.length ?? 0} saved · </Text>
+        <Text bold>{formatCost(storage)}/mo</Text>
+        <Text dimColor> storage</Text>
+      </Text>
+    ) : wide ? (
+      <Text>
+        <Text dimColor>{project ?? "all projects"} · </Text>
+        <Text bold>{formatRate(rate)}/hr</Text>
+        <Text dimColor> · </Text>
+        <Text bold>{formatCost(cost)}</Text>
+        <Text dimColor> this month</Text>
+      </Text>
+    ) : (
+      <Text bold>{formatRate(rate)}/hr</Text>
+    );
+
+  const progress = allRows.flatMap((row) => {
+    const step = rowActivity(row);
+    return step ? [{ name: row.name, step }] : [];
+  });
+
+  let bar: { local: KeyHint[]; global: KeyHint[] };
+  if (tab === "snapshots") {
+    bar = {
+      local: snapshotCursor ? [...(snapshotCursor.untagged ? [] : ([["⏎", "launch copy"]] as KeyHint[])), ["d", "delete"]] : [],
+      global: [["r", "refresh"], ["1", "VMs"], ["?", "help"]],
+    };
+  } else if (tab === "projects") {
+    bar = {
+      local: [["⏎", "show only this"], ["e", "edit repos"], ["n", "new project"], ["d", "delete"]],
+      global: [["a", "show all"], ["?", "help"]],
+    };
+  } else if (wide) {
+    bar = { local: vmKeys(selected), global: [["n", "new"], ["?", "help"]] };
+  } else {
+    bar = {
+      local: [...vmKeys(selected).filter(([k]) => ["⏎", "s", "d"].includes(k)), ...(selected?.vm ? ([["i", "inspect"]] as KeyHint[]) : [])],
+      global: [["n", "new"], ["?", "all keys"]],
+    };
+  }
+
+  let content;
+  if (overlay?.kind === "launch") {
+    content = (
+      <LaunchForm
+        fleet={fleet}
+        initial={launchPrefs}
+        keys={keys}
+        project={project}
+        repos={loadProjectRepos(project)}
+        onLaunch={(choice, count) => {
+          setOverlay(null);
+          void launch(choice, count);
+        }}
+        onCancel={() => setOverlay(null)}
+      />
+    );
+  } else if (overlay?.kind === "help") {
+    content = <Help onClose={() => setOverlay(null)} />;
+  } else if (overlay?.kind === "project") {
+    content = (
+      <ProjectPicker
+        projects={knownProjects.map((name) => ({ name, vms: (list ?? []).filter((vm) => vm.project === name).length }))}
+        totalVms={list?.length ?? 0}
+        current={project}
+        onPick={(next) => {
+          chooseProject(next);
+          setOverlay(null);
+        }}
+        onCreate={(name) => {
+          setSavedProjects((current) => [...new Set([...current, name])]);
+          chooseProject(name);
+          setOverlay(null);
+        }}
+        repos={loadProjectRepos}
+        onSaveRepos={(name, repos) => {
+          saveProjectRepos(name, repos);
+          setSavedProjects((current) => [...new Set([...current, name])]);
+        }}
+        onCancel={() => setOverlay(null)}
+      />
+    );
+  } else if (overlay?.kind === "delete") {
+    content = <DeleteConfirm row={overlay.row} snapshots={overlay.snapshots} error={overlay.error} />;
+  } else if (overlay?.kind === "sleep") {
+    content = (
+      <Modal title={`Put ${overlay.row.name} to sleep?`} tone="yellow" width={84}>
+        <SleepConfirm vm={overlay.row.vm!} kind={fleet.cloud(overlay.row.vm!.provider).vms.provider.sleepKind!} />
+      </Modal>
+    );
+  } else if (overlay?.kind === "snapshot") {
+    content = (
+      <Modal title={`Snapshot ${overlay.row.name}?`} tone="yellow" width={84}>
+        <Text>
+          It shuts down for a few minutes while its disk is copied, then starts again. The snapshot includes everything on
+          the disk, including signed-in credentials. Storage is about $0.06/GB/month.
+        </Text>
+        <Box marginTop={1}>
+          <KeyBar local={[["y", "snapshot"], ["esc", "cancel"]]} global={[]} />
+        </Box>
+      </Modal>
+    );
+  } else if (tab === "snapshots") {
+    content = (
+      <SnapshotList
+        snapshots={tabSnapshots}
+        providerLabels={providerLabels}
+        deleting={deletingSnapshots}
+        onLaunch={(snapshot) => void launchSnapshot(snapshot)}
+        onDelete={(snapshot) => void deleteSnapshot(snapshot)}
+        onCursor={setSnapshotCursor}
+        active
+      />
+    );
+  } else if (tab === "projects") {
+    content = (
+      <Projects
+        projects={projectSummaries}
+        current={project}
+        width={inner}
+        onShow={(next) => {
+          chooseProject(next);
+          if (next) setTab("vms");
+        }}
+        onCreate={(name) => {
+          saveProjectRepos(name, loadProjectRepos(name));
+          setSavedProjects((current) => [...new Set([...current, name])]);
+        }}
+        onSaveRepos={(name, repos) => {
+          saveProjectRepos(name, repos);
+          setSavedProjects((current) => [...new Set([...current, name])]);
+        }}
+        onDelete={(name) => {
+          removeProject(name);
+          setSavedProjects((current) => current.filter((p) => p !== name));
+          if (project === name) setProject(null);
+          setMessage({ text: `Forgot project ${name}.`, tone: "info" });
+        }}
+        onEditing={setProjectsEditing}
+      />
+    );
+  } else if (list === null) {
+    content = <Spinner label="Loading VMs…" />;
+  } else if (rows.length === 0) {
+    content = filter ? (
+      <Text>
+        No VMs match “{filter}”. <Text dimColor>esc clears the filter.</Text>
+      </Text>
+    ) : (
+      <Text>
+        {project ? `No VMs in ${project} yet.` : "No VMs yet."} Press <Text bold color="cyan">n</Text> to launch one
+        {knownProjects.length === 0 ? (
+          <>
+            , or <Text bold color="cyan">3</Text> to set up a project
+          </>
+        ) : null}
+        .
+      </Text>
+    );
+  } else {
+    const listWidth = showInspector ? inner - INSPECTOR_WIDTH - 2 : inner;
+    content = (
+      <Box>
+        <Box width={listWidth} flexDirection="column">
+          {filter ? (
+            <Text dimColor>
+              filter: <Text color="cyan">{filter}</Text> · {rows.length} of {projectRows.length} · esc clears
             </Text>
+          ) : null}
+          <VmList
+            rows={ordered}
+            selected={selected}
+            width={listWidth}
+            compact={showInspector || !wide}
+            grouped={grouped}
+            providerLabels={providerLabels}
+            now={now}
+          />
+        </Box>
+        {showInspector ? (
+          <Box borderStyle="single" borderTop={false} borderBottom={false} borderRight={false} borderDimColor paddingLeft={1}>
+            <Inspector
+              row={selected}
+              providerLabel={providerLabels[selected?.vm?.provider ?? selected?.job?.provider ?? ""] ?? ""}
+              now={now}
+              snapshots={snapshotsOf(selected)}
+              width={INSPECTOR_WIDTH - 1}
+            />
           </Box>
         ) : null}
       </Box>
     );
   }
 
-  if (picking) {
-    return (
-      <Box flexDirection="column" paddingX={1} paddingY={1}>
-        {header}
-        <LaunchForm
-          fleet={fleet}
-          initial={launchPrefs}
-          keys={keys}
-          project={project}
-          onLaunch={launch}
-          onCancel={() => setPicking(false)}
-        />
-      </Box>
-    );
-  }
-
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
-      {header}
-
-      {list === null ? (
-        <Spinner label="Loading VMs…" />
-      ) : rows.length === 0 ? (
-        <Text>
-          {project ? `No VMs in ${project} yet.` : "No agent VMs yet."} Press <Text bold color="cyan">n</Text> to launch
-          one{savedProjects.length === 0 ? <>, or <Text bold color="cyan">p</Text> to create a project</> : null}.
-        </Text>
-      ) : (
-        <VmTable
-          rows={rows}
-          selected={current}
-          providerLabels={providerLabels}
-          now={now}
-          showProject={project === null}
-        />
+    <Box flexDirection="column" paddingX={1}>
+      <Header
+        tab={tab}
+        counts={{ vms: list === null ? null : projectRows.length, snapshots: tabSnapshots?.length ?? null, projects: knownProjects.length }}
+        right={headerRight}
+        narrow={!wide}
+      />
+      <Rule width={inner} />
+      <Box flexDirection="column" minHeight={8}>
+        {content}
+      </Box>
+      <Rule width={inner} />
+      <ProgressLine items={progress} />
+      <MessageLine message={message} />
+      {filtering ? (
+        <Box gap={1}>
+          <Text color="cyan">/</Text>
+          <TextInput
+            defaultValue={filter}
+            placeholder="type part of a VM name"
+            onChange={(value) => {
+              setFilter(value);
+              setSelectedName(null);
+            }}
+            onSubmit={() => setFiltering(false)}
+          />
+          <Text dimColor>⏎ keep · esc clear</Text>
+        </Box>
+      ) : overlay ? null : (
+        <KeyBar local={bar.local} global={bar.global} />
       )}
+    </Box>
+  );
+}
 
-      <Box marginTop={1}>
-        {confirmDelete ? (
-          <Text color="yellow">
-            Delete {confirmDelete.name}? This destroys the VM, everything on it and any snapshots taken from it.{" "}
-            <Text bold>y/N</Text>
-          </Text>
-        ) : confirmSnapshot ? (
-          <Text color="yellow">
-            Snapshot {confirmSnapshot.name}? It shuts down for a few minutes while its disk is copied, then starts
-            again. The snapshot includes everything on the disk, including signed-in credentials; storage is about
-            $0.06/GB/month. <Text bold>y/N</Text>
-          </Text>
-        ) : confirmSleep ? (
-          <SleepConfirm vm={confirmSleep.vm!} kind={fleet.cloud(confirmSleep.vm!.provider).vms.provider.sleepKind!} />
-        ) : message ? (
-          <Text color={message.tone === "error" ? "red" : message.tone === "success" ? "green" : undefined}>
-            {message.tone === "error" ? "✗ " : message.tone === "success" ? "✓ " : ""}
-            {message.text}
-          </Text>
+function DeleteConfirm({ row, snapshots, error }: { row: Row; snapshots: FleetSnapshot[] | null; error?: string }) {
+  const vmMonthly = row.vm ? (hourlyRate(row.vm) ?? 0) * HOURS_PER_MONTH : 0;
+  const saves = vmMonthly + (snapshots ?? []).reduce((sum, s) => sum + (s.monthly ?? 0), 0);
+  const items = 1 + (snapshots?.length ?? 0);
+  return (
+    <Modal title={`Delete ${row.name}?`} tone="red" width={76}>
+      <Text>Destroys the VM and everything on it.{snapshots && snapshots.length > 0 ? " These go too:" : ""}</Text>
+      <Box marginTop={1} flexDirection="column">
+        <Text>
+          <Text color="red">  ✕ </Text>
+          {row.name.padEnd(34)}
+          {"VM".padEnd(14)}
+          <Text dimColor>{row.vm && hourlyRate(row.vm) !== null ? `${formatRate(hourlyRate(row.vm)!)}/hr` : ""}</Text>
+        </Text>
+        {snapshots === null ? (
+          <Spinner label="Checking for its snapshots…" />
         ) : (
-          <Text> </Text>
+          snapshots.map((s) => (
+            <Text key={s.id}>
+              <Text color="red">  ✕ </Text>
+              {s.name.slice(0, 33).padEnd(34)}
+              {`${s.sizeGb} GB snap`.padEnd(14)}
+              <Text dimColor>{s.monthly === null ? "" : `${formatCost(s.monthly)}/mo`}</Text>
+            </Text>
+          ))
         )}
       </Box>
-
-      <Box marginTop={1} columnGap={2} flexWrap="wrap">
-        <Key k="n" label="new" />
-        <Key k="⏎" label="connect" />
-        <Key k="t" label="tmux" />
-        <Key k="i" label="details" />
-        <Key k="l" label="sign in" />
-        <Key k="g" label="desktop" />
-        <Key k="s" label="sleep" />
-        <Key k="w" label="wake" />
-        <Key k="a" label="auto-sleep" />
-        <Key k="b" label="snapshot" />
-        <Key k="d" label="delete" />
-        <Key k="p" label="project" />
-        <Key k="tab" label="snapshots" />
-        <Key k="q" label="quit" />
-      </Box>
-    </Box>
-  );
-}
-
-// Fits 110 columns with the project column (all-projects view).
-const COLUMNS = { name: 16, project: 10, status: 20, ip: 16, cloud: 13, region: 10, rate: 7, cost: 11 };
-
-// Total rate and month-to-date cost of the listed VMs, from list prices.
-function CostSummary({ vms, now }: { vms: FleetVm[]; now: Date }) {
-  const running = vms.filter((vm) => vm.status === "running").length;
-  const priced = vms.filter((vm) => vm.pricing);
-  const rate = priced.reduce((sum, vm) => sum + (hourlyRate(vm) ?? 0), 0);
-  const cost = priced.reduce((sum, vm) => sum + (monthToDateCost(vm, now) ?? 0), 0);
-  const unpriced = vms.length - priced.length;
-  return (
-    <Text>
-      {running} running · <Text bold>{formatRate(rate)}/hr</Text> · <Text bold>{formatCost(cost)}</Text> this month
-      <Text dimColor> (est.{unpriced > 0 ? `, ${unpriced} without prices` : ""})</Text>
-    </Text>
-  );
-}
-
-interface VmTableProps {
-  rows: Row[];
-  selected: number;
-  providerLabels: Record<string, string>;
-  now: Date;
-  /** In the all-projects view. */
-  showProject: boolean;
-}
-
-function VmTable({ rows, selected, providerLabels, now, showProject }: VmTableProps) {
-  return (
-    <Box flexDirection="column">
-      <Box>
+      {error ? <Text color="yellow">Couldn't check its snapshots ({error}); only the VM will be deleted.</Text> : null}
+      <Box marginTop={1}>
         <Text dimColor>
-          {"  "}
-          {"NAME".padEnd(COLUMNS.name)}
-          {showProject ? "PROJECT".padEnd(COLUMNS.project) : ""}
-          {"STATUS".padEnd(COLUMNS.status)}
-          {"IP".padEnd(COLUMNS.ip)}
-          {"CLOUD".padEnd(COLUMNS.cloud)}
-          {"REGION".padEnd(COLUMNS.region)}
-          {"$/HR".padEnd(COLUMNS.rate)}
-          {"THIS MONTH".padEnd(COLUMNS.cost)}
-          AGE
+          {saves > 0 ? `Saves about ${formatCost(saves)}/mo. ` : ""}Can't be undone.
         </Text>
       </Box>
-      {rows.map((row, index) => {
-        const isSelected = index === selected;
-        return (
-          <Box key={row.key}>
-            <Text color="cyan">{isSelected ? "❯ " : "  "}</Text>
-            <Box width={COLUMNS.name}>
-              <Text bold={isSelected}>{row.name}</Text>
-            </Box>
-            {showProject && (
-              <Box width={COLUMNS.project}>
-                <Text wrap="truncate" dimColor={!(row.vm?.project ?? row.job?.project)}>
-                  {row.vm?.project ?? row.job?.project ?? "—"}
-                </Text>
-              </Box>
-            )}
-            <Box width={COLUMNS.status}>
-              <StatusCell row={row} />
-            </Box>
-            <Box width={COLUMNS.ip}>
-              <Text dimColor={!row.vm?.publicIp}>{row.vm?.publicIp ?? "—"}</Text>
-            </Box>
-            <Box width={COLUMNS.cloud}>
-              <Text>{providerLabels[row.vm?.provider ?? row.job?.provider ?? ""]}</Text>
-            </Box>
-            <Box width={COLUMNS.region}>
-              <Text wrap="truncate">{row.vm?.region ?? row.job?.region ?? ""}</Text>
-            </Box>
-            <Box width={COLUMNS.rate}>
-              <CostCell value={row.vm ? hourlyRate(row.vm) : undefined} format={formatRate} />
-            </Box>
-            <Box width={COLUMNS.cost}>
-              <CostCell value={row.vm ? monthToDateCost(row.vm, now) : undefined} format={formatCost} />
-            </Box>
-            <Text dimColor>{row.vm ? age(row.vm.createdAt) : ""}</Text>
-          </Box>
-        );
-      })}
-    </Box>
+      <Box marginTop={1}>
+        {snapshots === null ? (
+          <KeyBar local={[["esc", "cancel"]]} global={[]} />
+        ) : (
+          <KeyBar
+            local={[
+              ["y", items === 1 ? "delete" : `delete all ${items}`],
+              ...(snapshots.length > 0 ? ([["k", "keep snapshots"]] as KeyHint[]) : []),
+              ["esc", "cancel"],
+            ]}
+            global={[]}
+          />
+        )}
+      </Box>
+    </Modal>
   );
 }
-
-// undefined: not created yet; null: the provider has no prices.
-function CostCell({ value, format }: { value: number | null | undefined; format: (n: number) => string }) {
-  if (value === undefined) return <Text> </Text>;
-  return value === null ? <Text dimColor>—</Text> : <Text>{format(value)}</Text>;
-}
-
-const PHASE_LABELS: Record<Phase, string> = {
-  creating: "creating",
-  booting: "booting",
-  installing: "installing tools",
-  ready: "ready",
-  failed: "setup failed",
-};
 
 function SleepConfirm({ vm, kind }: { vm: FleetVm; kind: "snapshot" | "stop" }) {
   const now = vm.pricing ? `${formatRate(vm.pricing.hourly)}/hr` : "its running price";
@@ -888,65 +1002,18 @@ function SleepConfirm({ vm, kind }: { vm: FleetVm; kind: "snapshot" | "stop" }) 
       </Text>
       <Text color="yellow">
         Sleeping and waking each take a minute or two (longer for big disks); it gets a new IP. Running programs
-        stop. The snapshot includes everything on the disk, including signed-in credentials. <Text bold>y/N</Text>
+        stop. The snapshot includes everything on the disk, including signed-in credentials.
       </Text>
     </Box>
   ) : (
     <Text color="yellow">
       Put {vm.name} to sleep? It's stopped until you wake it, and you pay only for its disk
       {vm.pricing ? ` (${formatRate(vm.pricing.stoppedHourly)}/hr)` : ""}. It gets a new IP when it wakes. Running
-      programs stop. <Text bold>y/N</Text>
+      programs stop.
     </Text>
   );
 }
 
-// A spinner whose label is cut to the column instead of wrapping.
-function Busy({ label }: { label: string }) {
-  return (
-    <Box gap={1}>
-      <Spinner />
-      <Text wrap="truncate-end">{label}</Text>
-    </Box>
-  );
-}
-
-function StatusCell({ row }: { row: Row }) {
-  if (row.deleting) return <Spinner label="deleting" />;
-  if (row.busy) return <Spinner label={row.busy} />;
-
-  const phase = row.job?.phase;
-  if (phase === "installing" && row.job?.step) return <Busy label={row.job.step} />;
-  if (phase === "creating" || phase === "booting" || phase === "installing") {
-    return <Spinner label={PHASE_LABELS[phase]} />;
-  }
-  if (phase === "ready") return <Text color="green">● ready</Text>;
-  if (phase === "failed") return <Text color="red">✗ {PHASE_LABELS.failed}</Text>;
-
-  switch (row.vm?.status) {
-    case "running":
-      return (
-        <Text>
-          <Text color="green">● running</Text>
-          {row.autosleep ? <Text dimColor>{` ☾${formatMinutes(row.autosleep)}`}</Text> : null}
-        </Text>
-      );
-    case "provisioning":
-      return <Spinner label="starting" />;
-    case "asleep":
-      return <Text color="blue">☾ asleep</Text>;
-    case "stopped":
-      // DigitalOcean keeps billing stopped VMs in full; only delete stops it.
-      return row.vm.pricing && row.vm.pricing.stoppedHourly >= row.vm.pricing.hourly ? (
-        <Text color="yellow">○ stopped, billed</Text>
-      ) : (
-        <Text dimColor>○ stopped</Text>
-      );
-    case "error":
-      return <Text color="red">✗ error</Text>;
-    default:
-      return <Text dimColor>{row.vm?.providerStatus ?? ""}</Text>;
-  }
-}
 
 export function SetupNeeded({ error }: { error: string }) {
   const { exit } = useApp();

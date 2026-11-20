@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { TextInput } from "@inkjs/ui";
 import { isValidProjectName, parseRepo, repoSlug } from "@convoy/core";
-import { Key } from "./key";
+import { Key } from "./ui";
 
 export interface ProjectPickerProps {
   /** Known projects with how many VMs each has. */
