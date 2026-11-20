@@ -21,7 +21,7 @@ import {
   type FleetVm,
   type SignInMode,
   type Vm,
-} from "@agent-platform/core";
+} from "@convoy/core";
 import { afterSetup } from "../after-setup";
 import { AutoSleeper } from "../autosleep";
 import {
@@ -594,7 +594,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     <Box flexDirection="column" marginBottom={1}>
       <Box gap={2}>
         <Text bold color="cyan">
-          agent-vm
+          convoy
         </Text>
         <Text bold>{project ?? "all projects"}</Text>
         <Text dimColor>{summary}</Text>
@@ -944,7 +944,7 @@ export function SetupNeeded({ error }: { error: string }) {
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1} gap={1}>
       <Text bold color="cyan">
-        agent-vm
+        convoy
       </Text>
       <Text color="yellow">{error}</Text>
       <Box flexDirection="column">

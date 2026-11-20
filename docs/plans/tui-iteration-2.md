@@ -41,9 +41,9 @@ OVH supports instance snapshots too (`POST /cloud/project/{p}/instance/{id}/snap
   2. **Region**: the regions where the chosen size is available right now, with readable names (`nyc1 New York 1`). The last-used region is preselected.
   3. **Size**: the sizes in that region, with vCPU / RAM / disk / $ per month. Defaults to `s-2vcpu-4gb`.
   4. **Tools**: the current tool picker (fresh VMs only; a snapshot already has its tools).
-  5. **Confirm** line: `agent-vm-3fa1 · nyc1 · 2 vCPU 4 GB · $24/mo · claude, codex`. Enter launches.
+  5. **Confirm** line: `convoy-3fa1 · nyc1 · 2 vCPU 4 GB · $24/mo · claude, codex`. Enter launches.
 - [x] `enter` through every step = launch with the remembered defaults, so the fast path stays one key plus enters.
-- [x] Remember last choices in `~/.config/agent-vm/prefs.json` (region, size, tools). `.env` values become the first-run defaults only.
+- [x] Remember last choices in `~/.config/convoy/prefs.json` (region, size, tools). `.env` values become the first-run defaults only.
 - [x] Changing region re-filters sizes. If the remembered size isn't offered there, say so and let the user pick another (no auto-pick). Sizes under 2 GB RAM are dimmed as too small for agent tools.
 - [x] The header shows the current default: `digitalocean · nyc1 · s-2vcpu-4gb`.
 - [x] CLI parity: `create --region` already exists; add `pnpm cli regions --size s-2vcpu-4gb` to show where a size is available.
@@ -51,7 +51,7 @@ OVH supports instance snapshots too (`POST /cloud/project/{p}/instance/{id}/snap
 ### S1: Take a snapshot
 - [x] `b` on a VM in the list (`s` is sleep) → confirm (y/N; safe only, `--live` on the CLI):
   ```
-  Snapshot agent-vm-3fa1?   name: agent-vm-3fa1-2026-10-30
+  Snapshot convoy-3fa1?   name: convoy-3fa1-2026-10-30
   ( ) Live — VM keeps running, disk may be mid-write
   (•) Safe — shut down, snapshot, start again (VM offline ~2–5 min)
   Storage: ~$0.06/GB/month. enter to start · esc to cancel
@@ -68,10 +68,10 @@ OVH supports instance snapshots too (`POST /cloud/project/{p}/instance/{id}/snap
 ### S3: Launch from a snapshot
 - [ ] Launch form with source = snapshot (not built: copies use the snapshot's size and region; the CLI takes `--size`/`--region`, and DigitalOcean rejects a too-small disk).
 - [x] Uses a small **restore** cloud-init instead of the full bootstrap (§4): new SSH host keys, its own Tailscale identity, empty fail2ban list, and subscription logins (Claude OAuth, Codex ChatGPT) removed so they're never copied between machines.
-- [ ] Verify after launch with an `agent-vm-doctor` baseline audit (copies use the same markers check as today; the doctor script isn't built).
+- [ ] Verify after launch with a `convoy-doctor` baseline audit (copies use the same markers check as today; the doctor script isn't built).
 
 ### S4: Park and copy (stretch)
-- [x] **Park** shipped as **sleep/wake** (`s`/`w`, `pnpm cli sleep|wake`): graceful shutdown → snapshot → tag (`agent-vm-asleep`, size, project) → delete; wake recreates the droplet with a small wake cloud-init (`buildWakeCloudInit`: SSH key + re-lock root's password) and deletes the snapshot. On AWS it's stop/start. Tested on DigitalOcean: sleep 58s, wake 90s, 2.68 GB snapshot; disk, baseline and locked root survived.
+- [x] **Park** shipped as **sleep/wake** (`s`/`w`, `pnpm cli sleep|wake`): graceful shutdown → snapshot → tag (`convoy-asleep`, size, project) → delete; wake recreates the droplet with a small wake cloud-init (`buildWakeCloudInit`: SSH key + re-lock root's password) and deletes the snapshot. On AWS it's stop/start. Tested on DigitalOcean: sleep 58s, wake 90s, 2.68 GB snapshot; disk, baseline and locked root survived.
 - [ ] Copy a snapshot to another region (`c` on the Snapshots screen) via the `transfer` action, with progress.
 
 ## 4. Snapshot restore: what has to happen on first boot
@@ -116,7 +116,7 @@ interface VmProvider {
 
 `core/agent-vms.ts` gains `snapshot(vm, { safe })` (orchestrates shutdown → snapshot → power on → wait), `launchFromSnapshot(...)`, and `buildRestoreCloudInit(...)` in `cloud-init.ts`. The TUI only calls `AgentVms`, so the web app reuses the same flow.
 
-Snapshots are identified by name prefix `agent-vm-` (DO snapshots can't be tagged by the snapshot action itself; tag them afterwards via `POST /v2/tags/agent-vm/resources` if listing by prefix proves too loose).
+Snapshots are identified by name prefix `convoy-` (DO snapshots can't be tagged by the snapshot action itself; tag them afterwards via `POST /v2/tags/convoy/resources` if listing by prefix proves too loose).
 
 ## 6. Screens
 
@@ -124,25 +124,25 @@ Snapshots are identified by name prefix `agent-vm-` (DO snapshots can't be tagge
 ```
  New agent VM                                               esc cancel
 
- Source   ● Fresh Ubuntu 24.04      ○ agent-vm-3fa1-2026-10-30 (7 GB)
+ Source   ● Fresh Ubuntu 24.04      ○ convoy-3fa1-2026-10-30 (7 GB)
  Region   ❯ nyc1  New York 1
             sfo2  San Francisco 2
             ams3  Amsterdam 3          (9 regions have s-2vcpu-4gb)
  Size     s-2vcpu-4gb   2 vCPU · 4 GB · 80 GB     $24/mo
  Tools    ✓ Claude Code  ✓ Codex  ✓ agent-browser  ✓ OpenCode
 
- agent-vm-91c2 · nyc1 · 2 vCPU 4 GB · $24/mo          enter launch
+ convoy-91c2 · nyc1 · 2 vCPU 4 GB · $24/mo          enter launch
 ```
 Up/down moves within a field, tab/enter moves to the next field.
 
 ### Snapshots
 ```
- agent-vm  digitalocean       [VMs]  Snapshots          3 snapshots · $1.10/mo
+ convoy  digitalocean       [VMs]  Snapshots          3 snapshots · $1.10/mo
 
    NAME                         FROM             SIZE   REGIONS   CREATED
- ❯ agent-vm-3fa1-2026-10-30     agent-vm-3fa1    7 GB   nyc1      2h
-   agent-vm-3fa1-2026-10-28     (deleted)        6 GB   nyc1      2d
-   golden-claude                agent-vm-77b2    9 GB   nyc1 sfo2 5d
+ ❯ convoy-3fa1-2026-10-30     convoy-3fa1    7 GB   nyc1      2h
+   convoy-3fa1-2026-10-28     (deleted)        6 GB   nyc1      2d
+   golden-claude                convoy-77b2    9 GB   nyc1 sfo2 5d
 
  ⏎ launch  d delete  c copy to region  tab VMs  q quit
 ```
@@ -176,7 +176,7 @@ packages/core/src/
   vm-setup/doctor.sh    NEW: the baseline audit (from today's manual check), installed on every VM
 
 apps/cli/src/
-  prefs.ts              NEW: ~/.config/agent-vm/prefs.json
+  prefs.ts              NEW: ~/.config/convoy/prefs.json
   tui/app.tsx           tab between VMs and Snapshots
   tui/launch-form.tsx   NEW
   tui/snapshots.tsx     NEW

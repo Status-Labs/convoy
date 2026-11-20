@@ -1,4 +1,4 @@
-import { IDLE_CHECK_SCRIPT, parseIdleCheck, type Fleet, type FleetVm } from "@agent-platform/core";
+import { IDLE_CHECK_SCRIPT, parseIdleCheck, type Fleet, type FleetVm } from "@convoy/core";
 import { forgetHostKey, runScript } from "./ssh";
 
 export type AutosleepEvent =

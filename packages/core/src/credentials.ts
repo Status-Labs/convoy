@@ -89,7 +89,7 @@ export function keySetupScript(keys: AgentKeys, identity?: GitIdentity | null): 
     "set -euo pipefail",
     "umask 077",
     'export PATH="$HOME/.local/bin:$PATH"',
-    'keys="$HOME/.config/agent-vm"',
+    'keys="$HOME/.config/convoy"',
     'mkdir -p "$keys"',
     // Sets one key in a JSON config file, keeping the rest of it.
     'json_set() { local file="$1"; shift; mkdir -p "$(dirname "$file")"; [ -s "$file" ] || echo "{}" > "$file"; jq "$@" "$file" > "$file.tmp"; mv "$file.tmp" "$file"; }',
@@ -99,14 +99,14 @@ export function keySetupScript(keys: AgentKeys, identity?: GitIdentity | null): 
       `printf '%s' ${shellQuote(keys.anthropic)} > "$keys/anthropic-api-key"`,
       // apiKeyHelper rather than ANTHROPIC_API_KEY: no approval prompt, and the key stays out of every process's environment.
       'if command -v claude >/dev/null; then json_set "$HOME/.claude/settings.json" --arg helper "cat $keys/anthropic-api-key" \'.apiKeyHelper = $helper\'; fi',
-      'if command -v opencode >/dev/null; then json_set "$HOME/.config/opencode/opencode.json" \'.provider.anthropic.options.apiKey = "{file:~/.config/agent-vm/anthropic-api-key}"\'; fi',
+      'if command -v opencode >/dev/null; then json_set "$HOME/.config/opencode/opencode.json" \'.provider.anthropic.options.apiKey = "{file:~/.config/convoy/anthropic-api-key}"\'; fi',
     );
   }
   if (keys.openai) {
     lines.push(
       `printf '%s' ${shellQuote(keys.openai)} > "$keys/openai-api-key"`,
       'if command -v codex >/dev/null; then codex login --with-api-key < "$keys/openai-api-key" >/dev/null; fi',
-      'if command -v opencode >/dev/null; then json_set "$HOME/.config/opencode/opencode.json" \'.provider.openai.options.apiKey = "{file:~/.config/agent-vm/openai-api-key}"\'; fi',
+      'if command -v opencode >/dev/null; then json_set "$HOME/.config/opencode/opencode.json" \'.provider.openai.options.apiKey = "{file:~/.config/convoy/openai-api-key}"\'; fi',
     );
   }
   // Identity first: it can't fail, and a rejected token shouldn't skip it.

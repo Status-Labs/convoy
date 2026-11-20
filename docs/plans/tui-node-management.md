@@ -22,7 +22,7 @@ Each milestone is small enough to build, try on a real VM, and adjust.
 ### M1: Detail view
 - [x] `→` / `i` on a VM opens a full-screen detail view; `←` / `esc` goes back. `enter`, `l` and `g` work there too.
 - [x] Provider interface returns more per VM: size slug, vCPU, RAM, disk, image, monthly/hourly price.
-- [x] **Setup status from the VM itself:** check the `/var/lib/agent-vm/ready` marker over SSH, so status is right even after restarting the TUI. Shows `installing` / `ready` / `failed`.
+- [x] **Setup status from the VM itself:** check the `/var/lib/convoy/ready` marker over SSH, so status is right even after restarting the TUI. Shows `installing` / `ready` / `failed`.
 - [x] Tool versions (claude, codex, agent-browser, opencode, node, python, git, gh), plus GitHub sign-in, commit identity, cloned repos, desktop and tailnet status, tmux sessions.
 - [x] Cost columns and totals shipped earlier. The list shows setup steps live for VMs launched in this session; a `SETUP` column for every VM isn't built (the detail view shows it).
 
@@ -44,7 +44,7 @@ Each milestone is small enough to build, try on a real VM, and adjust.
 
 ### M5: Launch form (shipped in [tui-iteration-2.md](tui-iteration-2.md) R1)
 - [x] `n` opens a form: name, region, size (list with vCPU/RAM/price), image. Defaults prefilled, so `enter` straight through still launches in one step.
-- [x] Remember the last choices locally (`~/.config/agent-vm/`).
+- [x] Remember the last choices locally (`~/.config/convoy/`).
 
 ### M6: Polish
 - [ ] `l` setup log: last 200 lines of `/var/log/cloud-init-output.log`, scrollable.
@@ -57,11 +57,11 @@ Each milestone is small enough to build, try on a real VM, and adjust.
 
 ### List (M1 additions)
 ```
- agent-vm  digitalocean · nyc3 · s-2vcpu-4gb                  2 VMs · $48/mo
+ convoy  digitalocean · nyc3 · s-2vcpu-4gb                  2 VMs · $48/mo
 
    NAME              STATUS        SETUP       IP              CPU   MEM   AGE
- ❯ agent-vm-e41b4e   ● running     ✓ ready     203.0.113.7     12%   31%   3h
-   agent-vm-77b2e0   ○ stopped     ✓ ready     203.0.113.9       –     –   2d
+ ❯ convoy-e41b4e   ● running     ✓ ready     203.0.113.7     12%   31%   3h
+   convoy-77b2e0   ○ stopped     ✓ ready     203.0.113.9       –     –   2d
 
  n new  ⏎ connect  → details  d delete  r refresh  ? help  q quit
 ```
@@ -69,7 +69,7 @@ CPU/MEM columns in the list are a stretch goal. They need one metrics stream per
 
 ### Detail (M1–M4)
 ```
- ← agent-vm-e41b4e                                  ● running · ✓ setup ready
+ ← convoy-e41b4e                                  ● running · ✓ setup ready
  ──────────────────────────────────────────────────────────────────────────
  Size     s-2vcpu-4gb · 2 vCPU · 4 GB · 80 GB disk          $24/mo ($0.036/h)
  Image    ubuntu-24-04-x64              Region   nyc3
@@ -122,7 +122,7 @@ CPU/MEM columns in the list are a stretch goal. They need one metrics stream per
 5. Leaving the view kills the ssh process. On disconnect it retries with backoff and shows `metrics: reconnecting…`.
 
 ### SSH connection reuse
-Use OpenSSH multiplexing (`ControlMaster=auto`, `ControlPath=~/.config/agent-vm/cm-%C`, `ControlPersist=60s`). The metrics stream, health check, log viewer and interactive shells then share one TCP/SSH connection per VM, so opening the detail view is near-instant after the first connect.
+Use OpenSSH multiplexing (`ControlMaster=auto`, `ControlPath=~/.config/convoy/cm-%C`, `ControlPersist=60s`). The metrics stream, health check, log viewer and interactive shells then share one TCP/SSH connection per VM, so opening the detail view is near-instant after the first connect.
 
 ### Cost and limits
 - One metrics stream ≈ one ssh process and a few hundred bytes every 2s. Fine for a handful of VMs.

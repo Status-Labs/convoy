@@ -1,4 +1,4 @@
-// asleep: put to sleep by agent-vm (see VmProvider.sleepVm); costs only storage.
+// asleep: put to sleep by convoy (see VmProvider.sleepVm); costs only storage.
 export type VmStatus = "provisioning" | "running" | "stopped" | "asleep" | "error" | "unknown";
 
 export interface Vm {

@@ -1,4 +1,4 @@
-import { keysForMode, parseRepo, type AgentKeys, type CloneResult, type SignInMode } from "@agent-platform/core";
+import { keysForMode, parseRepo, type AgentKeys, type CloneResult, type SignInMode } from "@convoy/core";
 import { cloneRepos, installKeys, joinTailnet, localGitIdentity, runScript } from "./ssh";
 
 export interface AfterSetupOptions {

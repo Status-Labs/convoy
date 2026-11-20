@@ -17,7 +17,7 @@ importers:
 
   apps/cli:
     dependencies:
-      '@agent-platform/core':
+      '@convoy/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@inkjs/ui':

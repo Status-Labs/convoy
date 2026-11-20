@@ -1,7 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   DESKTOP_INFO_SCRIPT,
@@ -26,13 +24,14 @@ import {
   type CloneResult,
   type GitIdentity,
   type RepoRef,
-} from "@agent-platform/core";
+} from "@convoy/core";
+import { CONFIG_DIR, configDir } from "./config-dir";
 
 // VMs get recycled IPs, so keep their host keys out of ~/.ssh/known_hosts.
-const KNOWN_HOSTS = join(homedir(), ".config", "agent-vm", "known_hosts");
+const KNOWN_HOSTS = join(CONFIG_DIR, "known_hosts");
 
 function sshArgs(ip: string, extra: string[] = []): string[] {
-  mkdirSync(join(homedir(), ".config", "agent-vm"), { recursive: true });
+  configDir();
   return [
     "-o", "StrictHostKeyChecking=accept-new",
     "-o", `UserKnownHostsFile=${KNOWN_HOSTS}`,
@@ -312,7 +311,7 @@ export function openInBrowser(url: string): void {
 // after a reboot even if setup failed. Exit codes: 0 ready, 1 failed (prints
 // the failed step), 100 reboot pending, 101 still running (prints the phase).
 const SETUP_CHECK = [
-  "state=/var/lib/agent-vm",
+  "state=/var/lib/convoy",
   "case \"$(cloud-init status 2>/dev/null)\" in *running*|*'not started'*)",
   "  if [ -f $state/phase ]; then cat $state/phase; elif [ -f $state/ready ]; then echo 'finishing up'; else echo 'updating packages'; fi",
   "  exit 101;; esac",

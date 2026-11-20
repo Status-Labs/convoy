@@ -32,7 +32,7 @@ To add a VM that already exists: `pnpm cli tailscale <vm>`. It installs Tailscal
 With the Tailscale app connected, open your SSH app and connect to:
 
 ```
-agent@agent-vm-1a2b3c
+agent@convoy-1a2b3c
 ```
 
 That's the VM's name, which works if MagicDNS is on (the default for new tailnets; otherwise use the VM's `100.x.y.z` address from the Tailscale app). No private key is needed: VMs use [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh), which signs you in with your Tailscale identity. By default Tailscale asks you to confirm in the browser every 12 hours.
@@ -47,14 +47,14 @@ Then start an agent (`claude`, `codex`, ...) inside it. Next time, the same comm
 
 ## See a web app on your phone
 
-Every port on the VM is reachable from your tailnet (and only from it). Start a dev server listening on all interfaces, then open `http://agent-vm-1a2b3c:3000` in your phone's browser:
+Every port on the VM is reachable from your tailnet (and only from it). Start a dev server listening on all interfaces, then open `http://convoy-1a2b3c:3000` in your phone's browser:
 
 ```sh
 npm run dev -- --host 0.0.0.0     # Vite
 next dev -H 0.0.0.0               # Next.js
 ```
 
-Servers that listen on `localhost` only aren't reachable this way; that's the usual default, so most need the flag above. Docker containers publish to localhost on agent VMs, so they aren't reachable either unless you publish them on all interfaces (`-p 0.0.0.0:3000:3000`), which also needs `agent-vm-firewall expose` (see [port-forwarding.md](port-forwarding.md)).
+Servers that listen on `localhost` only aren't reachable this way; that's the usual default, so most need the flag above. Docker containers publish to localhost on agent VMs, so they aren't reachable either unless you publish them on all interfaces (`-p 0.0.0.0:3000:3000`), which also needs `convoy-firewall expose` (see [port-forwarding.md](port-forwarding.md)).
 
 ## How it's set up and what to know
 

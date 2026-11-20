@@ -17,12 +17,12 @@ export const DESKTOP_MIN_RAM_GB = 4;
  * the agent user.
  */
 export const DESKTOP_INFO_SCRIPT = `
-test -f /etc/systemd/system/agent-vm-desktop.service || exit 3
+test -f /etc/systemd/system/convoy-desktop.service || exit 3
 listening() { ss -tln | grep -q "127.0.0.1:${DESKTOP_PORT} "; }
-listening || sudo systemctl restart agent-vm-desktop.service
+listening || sudo systemctl restart convoy-desktop.service
 for _ in $(seq 30); do listening && break; sleep 1; done
-listening || { echo "the desktop didn't start; see: sudo journalctl -u agent-vm-desktop" >&2; exit 1; }
-cat ~/.config/agent-vm/desktop-password
+listening || { echo "the desktop didn't start; see: sudo journalctl -u convoy-desktop" >&2; exit 1; }
+cat ~/.config/convoy/desktop-password
 `;
 
 /**
@@ -32,7 +32,7 @@ cat ~/.config/agent-vm/desktop-password
  */
 export const DESKTOP_PHONE_SCRIPT = `
 set -euo pipefail
-test -f /etc/systemd/system/agent-vm-desktop.service || exit 3
+test -f /etc/systemd/system/convoy-desktop.service || exit 3
 command -v tailscale >/dev/null || exit 4
 status=$(tailscale status --json)
 [ "$(jq -r .BackendState <<<"$status")" = Running ] || exit 4
@@ -52,17 +52,17 @@ export const DESKTOP_PHONE_OFF_SCRIPT = "sudo tailscale serve --https=443 off\n"
  */
 export const DESKTOP_UNINSTALL_SCRIPT = `
 set -euo pipefail
-test -f /etc/systemd/system/agent-vm-desktop.service || exit 3
+test -f /etc/systemd/system/convoy-desktop.service || exit 3
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
 if command -v tailscale >/dev/null && sudo tailscale serve status 2>/dev/null | grep -q "127.0.0.1:${DESKTOP_PORT}"; then
   sudo tailscale serve --https=443 off || true
 fi
-sudo systemctl disable --now agent-vm-desktop.service
-sudo rm -f /etc/systemd/system/agent-vm-desktop.service
+sudo systemctl disable --now convoy-desktop.service
+sudo rm -f /etc/systemd/system/convoy-desktop.service
 sudo systemctl daemon-reload
 sudo apt-get purge -y -q kasmvncserver xfce4 xfce4-terminal xfce4-notifyd dbus-x11 firefox >/dev/null
 sudo apt-get autoremove --purge -y -q >/dev/null
 sudo rm -rf /etc/apt/sources.list.d/mozilla.list /etc/apt/preferences.d/mozilla /etc/apt/keyrings/packages.mozilla.org.asc /etc/firefox/policies
 sudo gpasswd -d ${DESKTOP_USER} ssl-cert >/dev/null || true
-rm -rf ~/.vnc ~/.kasmpasswd ~/.config/agent-vm/desktop-password
+rm -rf ~/.vnc ~/.kasmpasswd ~/.config/convoy/desktop-password
 `;

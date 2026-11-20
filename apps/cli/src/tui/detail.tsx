@@ -11,7 +11,7 @@ import {
   type FleetVm,
   type MetricsSample,
   type VmInfo,
-} from "@agent-platform/core";
+} from "@convoy/core";
 import { streamMetrics, vmInfo } from "../ssh";
 import { Key } from "./key";
 

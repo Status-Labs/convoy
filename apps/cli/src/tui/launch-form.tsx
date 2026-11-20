@@ -12,7 +12,7 @@ import {
   type SignInMode,
   type Size,
   type ToolId,
-} from "@agent-platform/core";
+} from "@convoy/core";
 import { placementFor, type LaunchPrefs } from "../prefs";
 import { Key } from "./key";
 

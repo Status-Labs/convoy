@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { formatCost, type FleetSnapshot } from "@agent-platform/core";
+import { formatCost, type FleetSnapshot } from "@convoy/core";
 import { Key } from "./key";
 
 export interface SnapshotListProps {

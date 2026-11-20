@@ -6,12 +6,12 @@ set -euo pipefail
 
 AGENT_USER=agent
 AGENT_HOME=/home/$AGENT_USER
-STATE_DIR=/var/lib/agent-vm
+STATE_DIR=/var/lib/convoy
 
 step="starting"
 log() {
   step="$*"
-  echo "[agent-vm] $*"
+  echo "[convoy] $*"
 }
 # A short label for the CLI's progress display (it reads $STATE_DIR/phase).
 phase() {
@@ -56,13 +56,13 @@ sysctl --system >/dev/null
 
 # Keeps Chrome's sandbox working for agent browsers instead of --no-sandbox.
 log "loading AppArmor profile for agent browsers"
-apparmor_parser -r /etc/apparmor.d/agent-vm-chrome
+apparmor_parser -r /etc/apparmor.d/convoy-chrome
 
 log "configuring firewall (inbound: ssh only)"
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp comment 'ssh'
-agent-vm-firewall apply-docker-rules
+convoy-firewall apply-docker-rules
 ufw --force enable
 
 log "enabling fail2ban and automatic security updates"
@@ -84,7 +84,7 @@ grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' "$AGENT_HOME/.bashrc" ||
 
 # Generated from the user's tool selection (see tools.ts).
 # shellcheck source=/dev/null
-. /usr/local/lib/agent-vm/install-tools.sh
+. /usr/local/lib/convoy/install-tools.sh
 
 rm -f "$STATE_DIR/phase"
 date -u +%FT%TZ > "$STATE_DIR/ready"

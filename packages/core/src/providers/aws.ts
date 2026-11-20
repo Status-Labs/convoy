@@ -59,9 +59,9 @@ export const aws: ProviderDefinition = {
 };
 
 // Instances we manage carry this tag.
-const TAG = "agent-vm";
-const PROJECT_TAG = "agent-vm-project";
-const SECURITY_GROUP = "agent-vm-ssh";
+const TAG = "convoy";
+const PROJECT_TAG = "convoy-project";
+const SECURITY_GROUP = "convoy-ssh";
 const DEFAULT_IMAGE = "ubuntu-24.04";
 const CANONICAL_OWNER = "099720108477";
 const UBUNTU_24_04_AMIS = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*";
@@ -378,7 +378,7 @@ export class AwsProvider implements VmProvider {
       ec2.send(
         new CreateSecurityGroupCommand({
           GroupName: SECURITY_GROUP,
-          Description: "agent-vm: inbound SSH only",
+          Description: "convoy: inbound SSH only",
           VpcId: vpcId,
           TagSpecifications: [{ ResourceType: "security-group", Tags: [{ Key: TAG, Value: "true" }] }],
         }),

@@ -39,19 +39,19 @@ export const digitalocean: ProviderDefinition = {
 };
 
 // Droplets we manage carry this tag, which the API can filter on.
-const TAG = "agent-vm";
-// Plus `agent-vm-project:<name>` when they belong to a project.
-const PROJECT_TAG = "agent-vm-project:";
+const TAG = "convoy";
+// Plus `convoy-project:<name>` when they belong to a project.
+const PROJECT_TAG = "convoy-project:";
 
 // Sleeping VMs are snapshots tagged ASLEEP_TAG, plus the droplet's size and
 // project, so waking can recreate it. Their VM id is "asleep-<image id>".
-const ASLEEP_TAG = "agent-vm-asleep";
-const SIZE_TAG = "agent-vm-size:";
+const ASLEEP_TAG = "convoy-asleep";
+const SIZE_TAG = "convoy-size:";
 const ASLEEP_ID = "asleep-";
 // Snapshots the user keeps (not sleep snapshots), plus size and project tags
 // like sleep snapshots, and the VM they came from.
-const SNAPSHOT_TAG = "agent-vm-snapshot";
-const FROM_TAG = "agent-vm-from:";
+const SNAPSHOT_TAG = "convoy-snapshot";
+const FROM_TAG = "convoy-from:";
 // Snapshot storage, per GB-month: https://docs.digitalocean.com/products/snapshots/details/pricing/
 const SNAPSHOT_GB_MONTH = 0.06;
 const HOURS_PER_MONTH = 730;
