@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Box, Text } from "ink";
 import { Spinner } from "@inkjs/ui";
 import { formatCost, formatMinutes, formatRate, hourlyRate, monthToDateCost, type FleetVm } from "@convoy/core";
@@ -116,11 +117,13 @@ export interface VmListProps {
   compact: boolean;
   /** Group headings, when more than one project shows. */
   grouped: boolean;
+  /** Lines available; a longer list scrolls to keep the selection in view. */
+  height: number;
   providerLabels: Record<string, string>;
   now: Date;
 }
 
-export function VmList({ rows, selected, width, compact, grouped, providerLabels, now }: VmListProps) {
+export function VmList({ rows, selected, width, height, compact, grouped, providerLabels, now }: VmListProps) {
   // Fixed columns; the name takes what's left.
   // Zero-width columns aren't shown.
   const cols = compact
@@ -178,23 +181,31 @@ export function VmList({ rows, selected, width, compact, grouped, providerLabels
     </Text>
   );
 
-  if (!grouped) {
-    return (
-      <Box flexDirection="column">
-        {header}
-        {rows.map(line)}
-      </Box>
-    );
-  }
+  // Every line the list would show, then the window of them that fits.
+  const lines: { key: string; node: ReactNode; row?: Row }[] = grouped
+    ? groupRows(rows).flatMap((group) => [
+        { key: `group:${group.project ?? ""}`, node: <Text dimColor>{`  ${(group.project ?? "no project").toUpperCase()}`}</Text> },
+        ...group.rows.map((row) => ({ key: row.key, node: line(row), row })),
+      ])
+    : rows.map((row) => ({ key: row.key, node: line(row), row }));
+  const room = Math.max(3, height - (header ? 1 : 0));
+  const at = Math.max(0, lines.findIndex((l) => l.row === selected));
+  let top = Math.min(Math.max(0, at - Math.floor(room / 2)), Math.max(0, lines.length - room));
+  // A group heading just above the window stays visible with its first row.
+  if (top > 0 && lines[top]?.row && !lines[top - 1]?.row && at - top < room - 1) top -= 1;
+  const above = top;
+  const below = Math.max(0, lines.length - top - room);
+  // Indicators take a line each, from the window.
+  const shown = lines.slice(top + (above > 0 ? 1 : 0), top + room - (below > 0 ? 1 : 0));
+
   return (
     <Box flexDirection="column">
       {header}
-      {groupRows(rows).map((group) => (
-        <Box key={group.project ?? "\0none"} flexDirection="column">
-          <Text dimColor>{`  ${(group.project ?? "no project").toUpperCase()}`}</Text>
-          {group.rows.map(line)}
-        </Box>
+      {above > 0 ? <Text dimColor>{`  ↑ ${above + 1} more`}</Text> : null}
+      {shown.map((l) => (
+        <Box key={l.key}>{l.node}</Box>
       ))}
+      {below > 0 ? <Text dimColor>{`  ↓ ${below + 1} more`}</Text> : null}
     </Box>
   );
 }

@@ -23,6 +23,9 @@ import { rowActivity, rowStatus, rowTone, type Row } from "./vm-list";
 const SETTLE_MS = 400;
 const HISTORY = 16;
 const INFO_REFRESH_MS = 30_000;
+// Setup line + 3 meters + a gap + 5 fields: the most the body shows, so it never changes height.
+const BODY_LINES = 10;
+const INFO_LABELS = ["Tools", "GitHub", "Repos", "Extras"];
 
 type Loadable<T> = { state: "loading" } | { state: "error"; error: string } | { state: "ready"; value: T };
 
@@ -101,7 +104,7 @@ export function Inspector({ row, providerLabel, now, snapshots, width }: Inspect
         {cost !== null ? ` · ${formatCost(cost)} this month` : ""}
       </Text>
 
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexDirection="column" height={BODY_LINES} flexShrink={0} overflow="hidden">
         <Body row={row} ip={ip} settled={settledIp !== null} info={info} samples={samples} width={inner} />
       </Box>
 
@@ -165,9 +168,8 @@ function Body({
     return <Text dimColor>Its disk is saved as a snapshot; only storage is billed. Waking takes about 1.5 minutes.</Text>;
   }
   if (!ip) return <Text dimColor>Not running.</Text>;
-  if (!settled) return <Text dimColor> </Text>;
 
-  const latest = samples.at(-1);
+  const latest = settled ? samples.at(-1) : undefined;
   const bar = Math.max(8, Math.min(HISTORY, width - 22));
   return (
     <Box flexDirection="column">
@@ -189,10 +191,25 @@ function Body({
           />
         </>
       ) : (
-        <Spinner label="Connecting for live metrics…" />
+        // Placeholders the size of the meters, so nothing moves when they arrive.
+        <>
+          {["CPU", "MEM", "DISK"].map((label, i) => (
+            <Box key={label}>
+              <Box width={6}>
+                <Text dimColor>{label}</Text>
+              </Box>
+              <Text dimColor>{"·".repeat(bar)}</Text>
+              {i === 0 ? (
+                <Box marginLeft={1}>
+                  <Spinner label={settled ? "connecting" : ""} />
+                </Box>
+              ) : null}
+            </Box>
+          ))}
+        </>
       )}
       <Box marginTop={1} flexDirection="column">
-        <InfoFields info={info} />
+        <InfoFields info={settled ? info : { state: "loading" }} />
       </Box>
     </Box>
   );
@@ -230,7 +247,17 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function InfoFields({ info }: { info: Loadable<VmInfo> }) {
-  if (info.state === "loading") return <Spinner label="Reading what's on it…" />;
+  if (info.state === "loading") {
+    return (
+      <>
+        {INFO_LABELS.map((label) => (
+          <Field key={label} label={label}>
+            <Text dimColor>{"·".repeat(label === "Tools" ? 24 : 12)}</Text>
+          </Field>
+        ))}
+      </>
+    );
+  }
   if (info.state === "error") return <Text color="red">Couldn't read the VM: {info.error}</Text>;
   const { tools, desktop, tailscale, github, repos, setup } = info.value;
   return (

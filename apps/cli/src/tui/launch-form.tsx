@@ -153,7 +153,9 @@ export function LaunchForm({ fleet, initial, keys, project, repos, onLaunch, onC
 
   return (
     <Modal title={`New VM${project ? ` in ${project}` : ""}`} width={92}>
-      {FIELDS.map((f, i) => {
+      {/* While a picker is open, only the row it changes shows, so the picker has room. */}
+      {FIELDS.filter((f) => editing === null || f === editing).map((f) => {
+        const i = FIELDS.indexOf(f);
         const isCursor = i === cursor && editing === null;
         return (
           <Box key={f}>
@@ -170,7 +172,7 @@ export function LaunchForm({ fleet, initial, keys, project, repos, onLaunch, onC
           </Box>
         );
       })}
-      <Box>
+      <Box display={editing ? "none" : "flex"}>
         <Text dimColor>{"  "}{"Repos".padEnd(10)}</Text>
         <Text dimColor wrap="truncate-end">
           {repos.length > 0 ? repos.join("  ") : project ? "none (add some in Projects, tab 3)" : "none (projects can clone repos)"}

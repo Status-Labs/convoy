@@ -98,7 +98,7 @@ function errorText(err: unknown): string {
 
 export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projects: initialProjects }: AppProps) {
   const { exit, suspendTerminal } = useApp();
-  const { columns } = useWindowSize();
+  const { columns, rows: terminalRows } = useWindowSize();
   const [list, setList] = useState<FleetVm[] | null>(null);
   const [allSnapshots, setAllSnapshots] = useState<FleetSnapshot[] | null>(null);
   const [autosleep, setAutosleep] = useState(loadAutosleep);
@@ -127,6 +127,11 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   const [now, setNow] = useState(() => new Date());
 
   const inner = Math.max(40, columns - 2);
+  // The frame fills the terminal (less one line, so Ink doesn't scroll) and every part has a
+  // fixed height, so the rules don't move as data loads: header + rule, the body, then
+  // rule + two status lines + the key bar.
+  const frameHeight = Math.max(16, terminalRows - 1);
+  const bodyHeight = frameHeight - 7;
   const wide = columns >= WIDE_COLUMNS;
   const showInspector = wide && inspectorOn;
 
@@ -884,7 +889,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     const listWidth = showInspector ? inner - INSPECTOR_WIDTH - 2 : inner;
     content = (
       <Box>
-        <Box width={listWidth} flexDirection="column">
+        <Box width={listWidth} height={bodyHeight} flexDirection="column" overflow="hidden">
           {filter ? (
             <Text dimColor>
               filter: <Text color="cyan">{filter}</Text> · {rows.length} of {projectRows.length} · esc clears
@@ -894,6 +899,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
             rows={ordered}
             selected={selected}
             width={listWidth}
+            height={bodyHeight - (filter ? 1 : 0)}
             compact={showInspector || !wide}
             grouped={grouped}
             providerLabels={providerLabels}
@@ -901,7 +907,16 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
           />
         </Box>
         {showInspector ? (
-          <Box borderStyle="single" borderTop={false} borderBottom={false} borderRight={false} borderDimColor paddingLeft={1}>
+          <Box
+            height={bodyHeight}
+            overflow="hidden"
+            borderStyle="single"
+            borderTop={false}
+            borderBottom={false}
+            borderRight={false}
+            borderDimColor
+            paddingLeft={1}
+          >
             <Inspector
               row={selected}
               providerLabel={providerLabels[selected?.vm?.provider ?? selected?.job?.provider ?? ""] ?? ""}
@@ -916,7 +931,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   }
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} height={frameHeight}>
       <Header
         tab={tab}
         counts={{ vms: list === null ? null : projectRows.length, snapshots: tabSnapshots?.length ?? null, projects: knownProjects.length }}
@@ -924,12 +939,16 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         narrow={!wide}
       />
       <Rule width={inner} />
-      <Box flexDirection="column" minHeight={8}>
+      <Box flexDirection="column" height={bodyHeight} flexShrink={0} overflow="hidden">
         {content}
       </Box>
       <Rule width={inner} />
-      <ProgressLine items={progress} />
-      <MessageLine message={message} />
+      {/* Progress and messages share two fixed lines; a long message wraps into the second. */}
+      <Box flexDirection="column" height={2} flexShrink={0} overflow="hidden">
+        <ProgressLine items={progress} />
+        <MessageLine message={message} />
+      </Box>
+      <Box height={1} flexShrink={0} overflow="hidden">
       {filtering ? (
         <Box gap={1}>
           <Text color="cyan">/</Text>
@@ -947,6 +966,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       ) : overlay ? null : (
         <KeyBar local={bar.local} global={bar.global} />
       )}
+      </Box>
     </Box>
   );
 }

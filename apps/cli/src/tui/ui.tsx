@@ -58,7 +58,7 @@ export type KeyHint = [key: string, label: string];
 /** Keys for what's selected, then app-wide keys after a dot. */
 export function KeyBar({ local, global }: { local: KeyHint[]; global: KeyHint[] }) {
   return (
-    <Box columnGap={2} flexWrap="wrap">
+    <Box columnGap={2}>
       {local.map(([k, label]) => (
         <Key key={k} k={k} label={label} />
       ))}
@@ -147,7 +147,7 @@ export function Modal({
   const { columns } = useWindowSize();
   const fitted = width === undefined ? undefined : Math.min(width, columns - 2);
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={tone} paddingX={1} width={fitted} alignSelf="center">
+    <Box flexDirection="column" borderStyle="round" borderColor={tone} paddingX={1} width={fitted} alignSelf="center" flexShrink={0}>
       <Text bold color={tone}>
         {title}
       </Text>
