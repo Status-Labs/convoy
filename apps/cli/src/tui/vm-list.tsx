@@ -143,11 +143,11 @@ export function VmList({ rows, selected, width, compact, grouped, providerLabels
         <Text bold={isSelected}>{fit(row.name, nameWidth)}</Text>
         <Box width={cols.status}>
           {activity ? (
-            <Box gap={1}>
-              <Spinner />
-              <Text color="yellow" wrap="truncate-end">
-                {activity}
-              </Text>
+            <Box>
+              <Box flexShrink={0}>
+                <Spinner />
+              </Box>
+              <Text color="yellow">{` ${fit(activity, cols.status - 3)}`}</Text>
             </Box>
           ) : (
             <Text color={statusColor}>{fit(status, cols.status)}</Text>

@@ -271,6 +271,13 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     try {
       await fleet.cloud(vm.provider).vms.sleep(vm, (step) => setStep(vm.name, step));
       if (vm.publicIp) forgetHostKey(vm.publicIp);
+      // Listings lag a few seconds behind; until then the VM would show as stopped.
+      setStep(vm.name, "finishing");
+      for (let i = 0; i < 10; i++) {
+        const { vms } = await fleet.listVms();
+        if (vms.some((v) => v.name === vm.name && v.status === "asleep")) break;
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
       setMessage({ text: `${vm.name} is asleep. Press s to wake it.`, tone: "success" });
     } catch (err) {
       setMessage({ text: `Couldn't put ${vm.name} to sleep: ${errorText(err)}`, tone: "error" });
@@ -799,6 +806,9 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     content = (
       <Modal title={`Put ${overlay.row.name} to sleep?`} tone="yellow" width={84}>
         <SleepConfirm vm={overlay.row.vm!} kind={fleet.cloud(overlay.row.vm!.provider).vms.provider.sleepKind!} />
+        <Box marginTop={1}>
+          <KeyBar local={[["y", "sleep"], ["esc", "cancel"]]} global={[]} />
+        </Box>
       </Modal>
     );
   } else if (overlay?.kind === "snapshot") {
@@ -997,8 +1007,8 @@ function SleepConfirm({ vm, kind }: { vm: FleetVm; kind: "snapshot" | "stop" }) 
   return kind === "snapshot" ? (
     <Box flexDirection="column">
       <Text color="yellow">
-        Put {vm.name} to sleep? It's shut down, snapshotted and deleted until you wake it: {now} becomes $0.06 per GB
-        of disk in use per month.
+        It's shut down, snapshotted and deleted until you wake it: {now} becomes $0.06 per GB of disk in use per
+        month.
       </Text>
       <Text color="yellow">
         Sleeping and waking each take a minute or two (longer for big disks); it gets a new IP. Running programs
@@ -1007,7 +1017,7 @@ function SleepConfirm({ vm, kind }: { vm: FleetVm; kind: "snapshot" | "stop" }) 
     </Box>
   ) : (
     <Text color="yellow">
-      Put {vm.name} to sleep? It's stopped until you wake it, and you pay only for its disk
+      It's stopped until you wake it, and you pay only for its disk
       {vm.pricing ? ` (${formatRate(vm.pricing.stoppedHourly)}/hr)` : ""}. It gets a new IP when it wakes. Running
       programs stop.
     </Text>

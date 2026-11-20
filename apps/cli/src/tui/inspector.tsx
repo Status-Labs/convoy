@@ -42,6 +42,8 @@ export function Inspector({ row, providerLabel, now, snapshots, width }: Inspect
   const [settledIp, setSettledIp] = useState<string | null>(null);
   const [info, setInfo] = useState<Loadable<VmInfo>>({ state: "loading" });
   const [samples, setSamples] = useState<MetricsSample[]>([]);
+  // What's on the VM changes as setup runs; read it again when that moves on.
+  const activity = row ? rowActivity(row) : null;
 
   useEffect(() => {
     setInfo({ state: "loading" });
@@ -62,12 +64,15 @@ export function Inspector({ row, providerLabel, now, snapshots, width }: Inspect
       );
     void load();
     const timer = setInterval(load, INFO_REFRESH_MS);
-    const stop = streamMetrics(settledIp, (sample) => setSamples((c) => [...c.slice(-(HISTORY - 1)), sample]), () => {});
     return () => {
       cancelled = true;
       clearInterval(timer);
-      stop();
     };
+  }, [settledIp, activity]);
+
+  useEffect(() => {
+    if (!settledIp) return;
+    return streamMetrics(settledIp, (sample) => setSamples((c) => [...c.slice(-(HISTORY - 1)), sample]), () => {});
   }, [settledIp]);
 
   if (!row) return <Text dimColor>Nothing selected.</Text>;
@@ -241,7 +246,7 @@ function InfoFields({ info }: { info: Loadable<VmInfo> }) {
       </Field>
       <Field label="Repos">{repos.length > 0 ? repos.map((r) => `~/${r}`).join("  ") : <Text dimColor>none</Text>}</Field>
       <Field label="Extras">
-        {[desktop ? "desktop" : null, tailscale ? `tailscale ${tailscale.state === "Running" ? "on" : tailscale.state.toLowerCase()}` : null]
+        {[desktop ? "desktop" : null, tailscale ? (tailscale.state === "Running" ? "Tailscale" : tailscale.state === "NeedsLogin" ? "Tailscale (needs sign-in: l)" : `Tailscale ${tailscale.state.toLowerCase()}`) : null]
           .filter(Boolean)
           .join(" · ") || <Text dimColor>none</Text>}
       </Field>
