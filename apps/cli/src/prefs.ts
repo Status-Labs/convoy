@@ -113,6 +113,16 @@ export function saveProjectRepos(project: string, repos: string[]): void {
   writePrefs(prefs);
 }
 
+/** Forgets a project and its repos. Its VMs, if any, keep their tag at the provider. */
+export function removeProject(project: string): void {
+  const prefs = readPrefs();
+  prefs.projects = (prefs.projects ?? []).filter((p) => p !== project);
+  const { [project]: _, ...rest } = prefs.repos ?? {};
+  prefs.repos = rest;
+  if (prefs.project === project) delete prefs.project;
+  writePrefs(prefs);
+}
+
 /** Auto-sleep settings: minutes of idleness by VM name. */
 export function loadAutosleep(): Record<string, number> {
   return readPrefs().autosleep ?? {};

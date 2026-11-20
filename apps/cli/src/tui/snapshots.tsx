@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { Spinner } from "@inkjs/ui";
 import { formatCost, type FleetSnapshot } from "@convoy/core";
-import { Key } from "./key";
 
 export interface SnapshotListProps {
   /** null while loading. */
@@ -12,9 +11,12 @@ export interface SnapshotListProps {
   deleting: Set<string>;
   onLaunch: (snapshot: FleetSnapshot) => void;
   onDelete: (snapshot: FleetSnapshot) => void;
-  onRefresh: () => void;
-  onBack: () => void;
-  onQuit: () => void;
+  /** Tells the app which snapshot is selected, for the key bar. */
+  onCursor: (snapshot: FleetSnapshot | undefined) => void;
+  /** Off while another panel (help) has the keys. */
+  active: boolean;
+  /** True while a delete is being confirmed, so app-wide keys stay off. */
+  onConfirming: (confirming: boolean) => void;
 }
 
 function age(iso: string): string {
@@ -27,20 +29,24 @@ function age(iso: string): string {
 const COLUMNS = { name: 32, from: 17, project: 11, data: 8, regions: 10, cost: 9 };
 
 /** Saved snapshots: launch a copy, or delete. */
-export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, onDelete, onRefresh, onBack, onQuit }: SnapshotListProps) {
+export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, onDelete, onCursor, active, onConfirming }: SnapshotListProps) {
   const [cursor, setCursor] = useState(0);
-  const [confirmDelete, setConfirmDelete] = useState<FleetSnapshot | null>(null);
+  const [confirmDelete, setConfirmDeleteState] = useState<FleetSnapshot | null>(null);
+  const setConfirmDelete = (snapshot: FleetSnapshot | null) => {
+    setConfirmDeleteState(snapshot);
+    onConfirming(snapshot !== null);
+  };
+  useEffect(() => () => onConfirming(false), []);
   const list = snapshots ?? [];
   const current = Math.min(cursor, list.length - 1);
+  const selected = list[current];
+  useEffect(() => onCursor(selected), [selected?.id]);
 
   useInput((input, key) => {
     if (confirmDelete) {
       if (input.toLowerCase() === "y") onDelete(confirmDelete);
       return setConfirmDelete(null);
     }
-    if (key.tab || key.escape) return onBack();
-    if (input === "q") return onQuit();
-    if (input === "r") return onRefresh();
     if (key.upArrow || input === "k") return setCursor(Math.max(0, current - 1));
     if (key.downArrow || input === "j") return setCursor(Math.min(list.length - 1, current + 1));
     const snapshot = list[current];
@@ -48,22 +54,12 @@ export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, on
     // An untagged snapshot doesn't record its size, so launching needs the CLI's --size.
     if (key.return && !snapshot.untagged) return onLaunch(snapshot);
     if (input === "d") return setConfirmDelete(snapshot);
-  });
+  }, { isActive: active });
 
-  const total = list.reduce((sum, s) => sum + (s.monthly ?? 0), 0);
 
   return (
     <Box flexDirection="column">
-      <Text>
-        <Text bold>Snapshots</Text>
-        {list.length > 0 && (
-          <Text dimColor>
-            {"  "}
-            {list.length} saved · {formatCost(total)}/month storage
-          </Text>
-        )}
-      </Text>
-      <Box marginTop={1} flexDirection="column">
+      <Box flexDirection="column">
         {snapshots === null ? (
           <Spinner label="Loading snapshots…" />
         ) : list.length === 0 ? (
@@ -145,13 +141,6 @@ export function SnapshotList({ snapshots, providerLabels, deleting, onLaunch, on
         )}
       </Box>
 
-      <Box marginTop={1} gap={2}>
-        {!list[current]?.untagged && <Key k="⏎" label="launch copy" />}
-        <Key k="d" label="delete" />
-        <Key k="r" label="refresh" />
-        <Key k="tab" label="VMs" />
-        <Key k="q" label="quit" />
-      </Box>
     </Box>
   );
 }
