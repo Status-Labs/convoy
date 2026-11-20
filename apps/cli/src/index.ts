@@ -84,6 +84,10 @@ function expandHome(path: string): string {
 
 const defaultSshKey = process.env.SSH_PUBLIC_KEY_PATH ?? "~/.ssh/id_ed25519.pub";
 
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
 async function confirm(question: string, expected = "y"): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(expected === "y" ? `${question} [y/N] ` : `${question} `);
@@ -530,15 +534,24 @@ program
 
 program
   .command("delete <vm>")
-  .description("Delete an agent VM (id or name)")
+  .description("Delete an agent VM (id or name) and the snapshots taken from it")
   .option("-y, --yes", "skip confirmation")
   .action(async (idOrName: string, opts) => {
     const { vm, cloud } = await fleet().findVm(idOrName);
-    if (!opts.yes && !(await confirm(`Delete ${vm.name} (${vm.id}) on ${cloud.label}?`))) return;
+    const snapshots = await fleet().snapshotsOf(vm);
+    if (snapshots.length > 0) {
+      console.log(`Its snapshots go too:`);
+      for (const s of snapshots) console.log(`  ${s.name} (${s.sizeGb} GB${s.monthly === null ? "" : `, ${formatCost(s.monthly)}/mo`})`);
+    }
+    if (!opts.yes && !(await confirm(`Delete ${vm.name} (${vm.id}) on ${cloud.label}${snapshots.length > 0 ? ` and ${plural(snapshots.length, "snapshot")}` : ""}?`))) return;
     if (vm.status === "running" && vm.publicIp) await leaveTailnet(vm.publicIp);
     await cloud.vms.provider.deleteVm(vm.id);
     if (vm.publicIp) forgetHostKey(vm.publicIp);
-    console.log(`Deleted ${vm.name}`);
+    const failed = await fleet().deleteSnapshots(snapshots);
+    for (const { snapshot, message } of failed) console.error(`Couldn't delete snapshot ${snapshot.name}: ${message}`);
+    const gone = snapshots.length - failed.length;
+    console.log(`Deleted ${vm.name}${gone > 0 ? ` and ${plural(gone, "snapshot")}` : ""}`);
+    if (failed.length > 0) process.exitCode = 1;
   });
 
 program

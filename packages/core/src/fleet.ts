@@ -90,4 +90,34 @@ export class Fleet {
     }
     return { vm, cloud: this.cloud(vm.provider) };
   }
+
+  /**
+   * Snapshots taken from a VM, which go when it's deleted: ones tagged with
+   * its name, and untagged ones named `<vm>-YYYYMMDD-HHMM` like `snapshot`
+   * names them. Snapshots only record the VM's name, so if another VM on the
+   * same provider has that name too, nothing is returned rather than guessing.
+   */
+  async snapshotsOf(vm: FleetVm): Promise<FleetSnapshot[]> {
+    const cloud = this.cloud(vm.provider);
+    if (!cloud.vms.provider.listSnapshots) return [];
+    const [vms, snapshots] = await Promise.all([cloud.vms.listVms(), cloud.vms.provider.listSnapshots()]);
+    if (vms.some((other) => other.name === vm.name && other.id !== vm.id)) return [];
+    const stamped = new RegExp(`^${vm.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d{8}-\\d{4}$`);
+    return snapshots
+      .filter((s) => (s.untagged ? stamped.test(s.name) : s.sourceVm === vm.name))
+      .map((s) => ({ ...s, provider: vm.provider }));
+  }
+
+  /** Deletes snapshots, carrying on past failures; returns the ones that couldn't be deleted. */
+  async deleteSnapshots(snapshots: FleetSnapshot[]): Promise<{ snapshot: FleetSnapshot; message: string }[]> {
+    const failed: { snapshot: FleetSnapshot; message: string }[] = [];
+    for (const snapshot of snapshots) {
+      try {
+        await this.cloud(snapshot.provider).vms.provider.deleteSnapshot!(snapshot.id);
+      } catch (err) {
+        failed.push({ snapshot, message: (err as Error).message });
+      }
+    }
+    return failed;
+  }
 }
