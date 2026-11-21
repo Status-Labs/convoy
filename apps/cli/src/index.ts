@@ -301,7 +301,7 @@ program
 
 program
   .command("keys <vm>")
-  .description("Set up the VM with the API keys and GITHUB_TOKEN in .env (e.g. after changing a key)")
+  .description("Set up the VM with the API keys, GITHUB_TOKEN and MCP servers in .env (e.g. after changing a key)")
   .action(async (idOrName: string) => {
     const { name, ip } = await vmIp(idOrName);
     const keys = agentKeysFromEnv();
@@ -311,6 +311,7 @@ program
       keys.github
         ? "git uses GITHUB_TOKEN; commits are by its account's GitHub noreply address"
         : "no GITHUB_TOKEN in .env, so the VM has no commit identity and git won't commit",
+      keys.mcp?.length ? `agents have MCP servers ${keys.mcp.map((s) => s.name).join(", ")}` : null,
     ];
     console.log(`On ${name}: ${done.filter(Boolean).join("; ")}.`);
   });
