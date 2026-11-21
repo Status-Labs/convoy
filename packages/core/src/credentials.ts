@@ -28,6 +28,33 @@ export interface AgentKeys {
    * Installed in either sign-in mode: it isn't a Claude or ChatGPT login.
    */
   github?: string;
+  /** MCP servers agents connect to, from MCP_<NAME>_URL (+ MCP_<NAME>_TOKEN). Installed in either sign-in mode. */
+  mcp?: McpServer[];
+}
+
+/** A Streamable HTTP MCP server registered with Claude Code and Codex on VMs. */
+export interface McpServer {
+  /** Lowercase name tools know it by, e.g. "shyup" from MCP_SHYUP_URL. */
+  name: string;
+  url: string;
+  /** Environment variable on the VM holding the bearer token, e.g. MCP_SHYUP_TOKEN. */
+  tokenVar?: string;
+  token?: string;
+}
+
+/** MCP servers from MCP_<NAME>_URL and optional MCP_<NAME>_TOKEN in .env. */
+export function mcpServersFromEnv(env: NodeJS.ProcessEnv = process.env): McpServer[] {
+  const servers: McpServer[] = [];
+  for (const [key, value] of Object.entries(env)) {
+    const match = /^MCP_([A-Z0-9_]+)_URL$/.exec(key);
+    const url = value?.trim();
+    if (!match || !url) continue;
+    if (!/^https?:\/\//.test(url)) throw new Error(`${key} must be an http(s) URL.`);
+    const tokenVar = `MCP_${match[1]}_TOKEN`;
+    const token = env[tokenVar]?.trim() || undefined;
+    servers.push({ name: match[1]!.toLowerCase().replace(/_/g, "-"), url, ...(token ? { tokenVar, token } : {}) });
+  }
+  return servers.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function agentKeysFromEnv(env: NodeJS.ProcessEnv = process.env): AgentKeys {
@@ -36,6 +63,7 @@ export function agentKeysFromEnv(env: NodeJS.ProcessEnv = process.env): AgentKey
     openai: env.OPENAI_API_KEY?.trim() || undefined,
     tailscale: env.TAILSCALE_AUTH_KEY?.trim() || undefined,
     github: env.GITHUB_TOKEN?.trim() || undefined,
+    mcp: mcpServersFromEnv(env),
   };
 }
 
@@ -109,12 +137,48 @@ export function keySetupScript(keys: AgentKeys): string {
     );
   }
   lines.push(...(keys.github ? githubTokenLines(keys.github) : CLEAR_GIT_IDENTITY));
+  lines.push(...mcpLines(keys.mcp ?? []));
   return lines.join("\n") + "\n";
+}
+
+/**
+ * Bash lines that register MCP servers with Claude Code and Codex for the agent
+ * user. Tokens go only in ~/.config/convoy/env (mode 600), which ~/.bashrc
+ * loads; both tools read them from the environment, so they're never on a
+ * command line or in a tool's config. Servers Convoy added before and that are
+ * no longer in .env are removed.
+ */
+function mcpLines(servers: McpServer[]): string[] {
+  const source = '[ -f "$HOME/.config/convoy/env" ] && . "$HOME/.config/convoy/env"';
+  const lines = [
+    `printf '' > "$keys/env"`,
+    ...servers.filter((s) => s.token).map((s) => `printf '%s\\n' ${shellQuote(`export ${s.tokenVar}=${shellQuote(s.token!)}`)} >> "$keys/env"`),
+    `grep -qxF ${shellQuote(source)} "$HOME/.bashrc" 2>/dev/null || printf '%s\\n' ${shellQuote(source)} >> "$HOME/.bashrc"`,
+    // Forget servers Convoy registered earlier that aren't wanted any more.
+    `for old in $(cat "$keys/mcp-servers" 2>/dev/null); do`,
+    `  case " ${servers.map((s) => s.name).join(" ")} " in *" $old "*) ;; *)`,
+    '    if command -v claude >/dev/null; then claude mcp remove -s user "$old" >/dev/null 2>&1 || true; fi',
+    '    if command -v codex >/dev/null; then codex mcp remove "$old" >/dev/null 2>&1 || true; fi ;;',
+    "  esac",
+    "done",
+    `printf '%s\\n' ${servers.map((s) => shellQuote(s.name)).join(" ") || "''"} | grep . > "$keys/mcp-servers" || true`,
+  ];
+  for (const s of servers) {
+    const name = shellQuote(s.name);
+    const url = shellQuote(s.url);
+    const header = s.tokenVar ? ` -H ${shellQuote(`Authorization: Bearer \${${s.tokenVar}}`)}` : "";
+    const bearer = s.tokenVar ? ` --bearer-token-env-var ${s.tokenVar}` : "";
+    lines.push(
+      `if command -v claude >/dev/null; then claude mcp remove -s user ${name} >/dev/null 2>&1 || true; claude mcp add -s user --transport http ${name} ${url}${header} >/dev/null; fi`,
+      `if command -v codex >/dev/null; then codex mcp remove ${name} >/dev/null 2>&1 || true; codex mcp add ${name} --url ${url}${bearer} >/dev/null; fi`,
+    );
+  }
+  return lines;
 }
 
 /** The keys a sign-in mode installs: API keys only in api-keys mode, GitHub in both. */
 export function keysForMode(keys: AgentKeys, mode: SignInMode): AgentKeys {
-  return mode === "api-keys" ? keys : { github: keys.github };
+  return mode === "api-keys" ? keys : { github: keys.github, mcp: keys.mcp };
 }
 
 /**

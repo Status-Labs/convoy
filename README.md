@@ -38,6 +38,8 @@ The list shows each VM's hourly rate and its estimated cost so far this month, w
 
 **GitHub.** Every VM has `git`, `gh` and GitLab's `glab`. Put a fine-grained `GITHUB_TOKEN` in `.env` and VMs can clone, pull and push your private repos (in either sign-in mode); commits are by the token's GitHub account, with its private noreply address. `pnpm cli clone <vm> owner/repo` clones one-off. See [docs/github.md](docs/github.md).
 
+**MCP servers.** Each `MCP_<NAME>_URL` (and optional `MCP_<NAME>_TOKEN`) in `.env` is added to Claude Code and Codex on every VM, so agents share tools such as a task manager. See [docs/mcp.md](docs/mcp.md).
+
 **From your phone.** Tick *Tailscale* at the tools step (`create --tailscale`) to put the VM on your private Tailscale network. Your phone's SSH app can then connect from anywhere with `ssh agent@<vm-name>`, signed in with your Tailscale account, and no port is opened to the internet. See [docs/phone-access.md](docs/phone-access.md).
 
 **A desktop.** Tick *Desktop* at the tools step (`create --desktop`) for a Linux desktop (XFCE on the VM's Ubuntu 24.04, with Firefox) that you open in a browser: press `g` on the VM, or use `pnpm cli desktop <vm> --phone` for a QR code to open it on your phone over Tailscale. Nothing is opened to the internet. See [docs/desktop.md](docs/desktop.md).
@@ -52,7 +54,7 @@ pnpm cli create        # launch a VM and wait for tools to install (--api-keys f
 pnpm cli list          # VMs on every enabled cloud
 pnpm cli ssh <name>    # --tmux for the persistent tmux session
 pnpm cli login <name>  # sign in agent tools with your own accounts
-pnpm cli keys <name>   # re-apply API keys and GITHUB_TOKEN to a VM
+pnpm cli keys <name>   # re-apply API keys, GITHUB_TOKEN and MCP servers to a VM
 pnpm cli clone <name> owner/repo
 pnpm cli tailscale <name>  # put an existing VM on your tailnet
 pnpm cli desktop <name>    # open the VM's desktop (--install, --uninstall, --phone, --phone-off)
