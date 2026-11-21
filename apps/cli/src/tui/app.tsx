@@ -13,7 +13,10 @@ import {
   hourlyRate,
   monthToDateCost,
   newVmName,
+  SETUP_VERSION,
   SIGN_IN_SCRIPT,
+  updateMessage,
+  updateStatus,
   type AgentKeys,
   type AgentVms,
   type Fleet,
@@ -36,6 +39,7 @@ import {
   type LaunchPrefs,
 } from "../prefs";
 import {
+  checkUpdate,
   desktopPassword,
   forgetHostKey,
   leaveTailnet,
@@ -44,6 +48,7 @@ import {
   openShell,
   openTmux,
   runInteractive,
+  updateVm,
   waitForCloudInit,
 } from "../ssh";
 import { Detail } from "./detail";
@@ -67,7 +72,7 @@ import {
   type Tab,
   type Tone,
 } from "./ui";
-import { groupRows, rowActivity, rowProject, rowTone, VmList, type Job, type Row } from "./vm-list";
+import { groupRows, needsUpdate, rowActivity, rowProject, rowTone, VmList, type Job, type Row } from "./vm-list";
 
 export interface AppProps {
   fleet: Fleet;
@@ -84,9 +89,12 @@ type Overlay =
   | { kind: "delete"; row: Row; snapshots: FleetSnapshot[] | null; error?: string }
   | { kind: "sleep"; row: Row }
   | { kind: "snapshot"; row: Row }
+  | { kind: "update"; row: Row }
   | null;
 
 const REFRESH_MS = 10_000;
+// How often to re-read each running VM's setup version.
+const UPDATE_CHECK_MS = 10 * 60_000;
 const SNAPSHOT_REFRESH_MS = 30_000;
 // Costs are computed locally from list prices, so they can tick between refreshes.
 const COST_TICK_MS = 5_000;
@@ -127,6 +135,10 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
   const [detailName, setDetailName] = useState<string | null>(null);
   const providerLabels = Object.fromEntries(fleet.clouds.map((c) => [c.name, c.label]));
   const [now, setNow] = useState(() => new Date());
+  // Setup version checks by VM id (an IP can be reused), read in the background.
+  const [updates, setUpdates] = useState<Record<string, NonNullable<Row["update"]> & { at: number }>>({});
+  const checking = useRef(new Set<string>());
+  const announced = useRef(new Set<string>());
 
   const inner = Math.max(40, columns - 2);
   // The frame fills the terminal (less one line, so Ink doesn't scroll) and every part has a
@@ -189,6 +201,35 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     return () => clearInterval(timer);
   }, [refreshSnapshots]);
 
+  const checkVersion = useCallback(async (vm: FleetVm) => {
+    if (!vm.publicIp || checking.current.has(vm.id)) return;
+    checking.current.add(vm.id);
+    try {
+      const { version, rebootRequired } = await checkUpdate(vm.publicIp);
+      const status = updateStatus(version);
+      setUpdates((current) => ({ ...current, [vm.id]: { status, rebootRequired, at: Date.now() } }));
+      const text = updateMessage(vm.name, status);
+      // Said once per VM per session; the list keeps showing it.
+      if (text && status.state !== "newer" && !announced.current.has(vm.id)) {
+        announced.current.add(vm.id);
+        setMessage((current) => current ?? { text: `${text} Select it and press u.`, tone: status.state === "security" ? "error" : "info" });
+      }
+    } catch {
+      // Unreachable or still setting up: try again on a later refresh.
+    } finally {
+      checking.current.delete(vm.id);
+    }
+  }, []);
+
+  useEffect(() => {
+    for (const vm of list ?? []) {
+      if (vm.status !== "running" || busy[vm.name] || jobs[vm.name]?.phase === "installing") continue;
+      const last = updates[vm.id];
+      if (!last || Date.now() - last.at > UPDATE_CHECK_MS) void checkVersion(vm);
+    }
+    // Re-checked on each listing (every REFRESH_MS); UPDATE_CHECK_MS limits the SSH calls.
+  }, [list]);
+
   const updateJob = (name: string, patch: Partial<Job>) =>
     setJobs((current) => ({ ...current, [name]: { name, phase: "creating", ...current[name], ...patch } as Job }));
 
@@ -207,6 +248,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       deleting: deleting.has(vm.id),
       busy: busy[vm.name],
       autosleep: autosleep[vm.name],
+      update: vm.status === "running" ? updates[vm.id] : undefined,
     })),
   ];
   const inProject = (p: string | null) => project === null || p === project;
@@ -481,6 +523,28 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
     void refresh();
   }
 
+  async function updateSetup(row: Row) {
+    const vm = row.vm!;
+    const ip = vm.publicIp;
+    if (!ip) return;
+    let code = 1;
+    await suspendTerminal(async () => {
+      process.stdout.write(`Updating ${vm.name} to Convoy setup v${SETUP_VERSION}. Agents and SSH sessions keep running.\n\n`);
+      code = await updateVm(ip);
+      process.stdout.write(code === 0 ? `\n${vm.name} is up to date.\n` : `\nThe update failed (exit ${code}). It's safe to run again.\n`);
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      await rl.question("Press enter to go back. ");
+      rl.close();
+    });
+    setUpdates(({ [vm.id]: _, ...rest }) => rest);
+    await checkVersion(vm);
+    setMessage(
+      code === 0
+        ? { text: `${vm.name} is on setup v${SETUP_VERSION}.`, tone: "success" }
+        : { text: `Updating ${vm.name} failed. Press u to retry, or run: pnpm cli update ${vm.name} --force`, tone: "error" },
+    );
+  }
+
   async function signIn(row: Row) {
     const ip = row.vm?.publicIp;
     if (!ip) {
@@ -592,6 +656,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         ["l", "sign-in"],
         ...(sleepSupported(vm) ? ([["s", "sleep"], ["a", row.autosleep ? "auto-sleep off" : "auto-sleep"]] as KeyHint[]) : []),
         ...(snapshotSupported(vm) ? ([["b", "snapshot"]] as KeyHint[]) : []),
+        ...(needsUpdate(row) ? ([["u", "update"]] as KeyHint[]) : []),
         ["d", "delete"],
       ];
     }
@@ -658,7 +723,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         if (!sleepSupported(vm)) return setMessage({ text: `Sleep isn't supported on ${providerLabels[vm.provider]} yet.`, tone: "info" });
         return setOverlay({ kind: "sleep", row });
       }
-      if (asleep && (key.return || ["l", "g", "t", "b", "a"].includes(input) || key.rightArrow)) {
+      if (asleep && (key.return || ["l", "g", "t", "b", "a", "u"].includes(input) || key.rightArrow)) {
         return setMessage({ text: `${row.name} is asleep. Press s to wake it.`, tone: "info" });
       }
       if (!vm) return setMessage({ text: `${row.name} is still being created.`, tone: "info" });
@@ -671,6 +736,12 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         if (!running) return setMessage({ text: `Auto-sleep is for running VMs.`, tone: "info" });
         if (!sleepSupported(vm)) return setMessage({ text: `Sleep isn't supported on ${providerLabels[vm.provider]} yet.`, tone: "info" });
         return toggleAutosleep(row);
+      }
+      if (input === "u") {
+        if (!running) return setMessage({ text: `Only running VMs can be updated.`, tone: "info" });
+        const status = row.update?.status;
+        if (status?.state === "newer") return setMessage({ text: updateMessage(row.name, status)!, tone: "info" });
+        return setOverlay({ kind: "update", row });
       }
       if (input === "b") {
         if (!running) return setMessage({ text: `Only running VMs can be snapshotted.`, tone: "info" });
@@ -693,6 +764,7 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       }
       if (overlay.kind === "sleep" && yes) void sleepVm(overlay.row);
       if (overlay.kind === "snapshot" && yes) void snapshotVm(overlay.row);
+      if (overlay.kind === "update" && yes) void updateSetup(overlay.row);
       setOverlay(null);
     },
     { isActive: overlay !== null && "row" in overlay },
@@ -838,6 +910,36 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
         </Text>
         <Box marginTop={1}>
           <KeyBar local={[["y", "snapshot"], ["esc", "cancel"]]} global={[]} />
+        </Box>
+      </Modal>
+    );
+  } else if (overlay?.kind === "update") {
+    const status = overlay.row.update?.status;
+    const current = status?.state === "current";
+    content = (
+      <Modal title={`Update ${overlay.row.name}?`} tone={status?.state === "security" ? "red" : "yellow"} width={84}>
+        <Text>
+          {status
+            ? current
+              ? `It's already on setup v${status.version}. Running the update again repairs anything that drifted.`
+              : `From setup v${status.version} to v${SETUP_VERSION}:`
+            : `Brings it to setup v${SETUP_VERSION}.`}
+        </Text>
+        {status && !current
+          ? status.notes.map((note) => (
+              <Text key={note}>
+                {"  "}- {note}
+              </Text>
+            ))
+          : null}
+        <Box marginTop={1}>
+          <Text dimColor>
+            Re-applies the security baseline and updates Node.js, the CLIs and agent tools over SSH. Agents and SSH
+            sessions keep running; nothing reboots.
+          </Text>
+        </Box>
+        <Box marginTop={1}>
+          <KeyBar local={[["y", "update"], ["esc", "cancel"]]} global={[]} />
         </Box>
       </Modal>
     );

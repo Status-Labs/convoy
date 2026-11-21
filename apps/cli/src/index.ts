@@ -26,6 +26,9 @@ import {
   parseRepo,
   parseToolIds,
   repoSlug,
+  SETUP_VERSION,
+  updateMessage,
+  updateStatus,
   type AgentKeys,
   type Cloud,
   type SignInMode,
@@ -35,6 +38,7 @@ import { afterSetup } from "./after-setup";
 import { AutoSleeper } from "./autosleep";
 import { loadAutosleep, loadProjectPrefs, loadProjectRepos, saveAutosleep, saveProjectRepos } from "./prefs";
 import {
+  checkUpdate,
   cloneRepos,
   desktopPassword,
   forgetHostKey,
@@ -49,6 +53,7 @@ import {
   leaveTailnet,
   localGitIdentity,
   uninstallDesktop,
+  updateVm,
   openShell,
   openTmux,
   runInteractive,
@@ -106,6 +111,16 @@ async function vmIp(idOrName: string): Promise<{ name: string; ip: string }> {
   const { vm } = await fleet().findVm(idOrName);
   if (!vm.publicIp) throw new Error(`${vm.name} has no public IP yet (status ${vm.status})`);
   return { name: vm.name, ip: vm.publicIp };
+}
+
+/** Tells the user if a VM needs a Convoy update. Best effort: never fails the command. */
+async function printUpdateHint(name: string, ip: string): Promise<void> {
+  try {
+    const message = updateMessage(name, updateStatus((await checkUpdate(ip)).version));
+    if (message) console.log(`${message} Run: pnpm cli update ${name}`);
+  } catch {
+    // The VM answered setup checks a moment ago; a hint isn't worth an error.
+  }
 }
 
 const program = new Command()
@@ -236,6 +251,7 @@ async function createFromSnapshot(
   for (const problem of problems) console.warn(`  ✗ ${problem}`);
   console.log(`Ready. Connect with:\n  pnpm cli ssh ${vm.name}`);
   if (tailnetName) console.log(`From your phone: ssh agent@${tailnetName}`);
+  await printUpdateHint(vm.name, vm.publicIp!);
 }
 
 program
@@ -396,6 +412,83 @@ program
   });
 
 program
+  .command("update [vm]")
+  .description(
+    "Bring a VM's Convoy setup (security baseline, CLIs, agent tools) up to date in place. No VM: show which VMs need it",
+  )
+  .option("--all", "update every running VM that needs it")
+  .option("--force", "run the update even if the VM is up to date (repairs a drifted setup)")
+  .option("--reboot", "reboot afterwards if updates need it (stops running programs)")
+  .action(async (idOrName: string | undefined, opts) => {
+    if (idOrName) return void (await updateOne(idOrName, opts));
+    const { vms: all, errors } = await fleet().listVms();
+    for (const { provider, message } of errors) console.error(`Couldn't list ${provider} VMs: ${message}`);
+    const vms = all.filter((vm) => vm.status === "running" && vm.publicIp && (!selectedProject || vm.project === selectedProject));
+    if (vms.length === 0) return console.log("No running VMs.");
+    const checked = await Promise.all(
+      vms.map(async (vm) => {
+        try {
+          const { version, rebootRequired } = await checkUpdate(vm.publicIp!);
+          return { vm, status: updateStatus(version), rebootRequired, error: null };
+        } catch (err) {
+          return { vm, status: null, rebootRequired: false, error: (err as Error).message };
+        }
+      }),
+    );
+    const label = { current: "up to date", available: "update available", security: "SECURITY UPDATE", newer: "newer than this CLI" };
+    for (const { vm, status, rebootRequired, error } of checked) {
+      const state = status ? `v${status.version} ${label[status.state]}` : `couldn't check: ${error}`;
+      console.log(`${vm.name.padEnd(28)} ${state}${rebootRequired ? " · reboot pending" : ""}`);
+    }
+    const outdated = checked.filter((c) => c.status?.state === "available" || c.status?.state === "security");
+    if (outdated.length === 0) return console.log(`All checked VMs are on setup v${SETUP_VERSION} or newer.`);
+    const notes = [...new Set(outdated.flatMap((c) => c.status!.notes))];
+    console.log(`\nWhat's new:\n${notes.map((n) => `  - ${n}`).join("\n")}`);
+    if (!opts.all) return console.log(`\nUpdate one with: pnpm cli update <vm>, or all with: pnpm cli update --all`);
+    let failed = 0;
+    for (const { vm } of outdated) {
+      console.log(`\n== ${vm.name}`);
+      if (!(await updateOne(vm.name, opts))) failed++;
+    }
+    if (failed > 0) {
+      console.error(`\n${plural(failed, "update")} failed.`);
+      process.exitCode = 1;
+    }
+  });
+
+async function updateOne(idOrName: string, opts: { force?: boolean; reboot?: boolean }): Promise<boolean> {
+  const { name, ip } = await vmIp(idOrName);
+  const before = await checkUpdate(ip);
+  const status = updateStatus(before.version);
+  if (status.state === "newer") throw new Error(updateMessage(name, status)!);
+  if (status.state === "current" && !opts.force) {
+    console.log(`${name} is up to date (setup v${status.version}).`);
+  } else {
+    console.log(`Updating ${name} from setup v${status.version} to v${SETUP_VERSION}. Agents and SSH sessions keep running.`);
+    for (const note of status.notes) console.log(`  - ${note}`);
+    const code = await updateVm(ip);
+    if (code !== 0) {
+      console.error(`Update failed on ${name} (exit ${code}). It's safe to run again: pnpm cli update ${name} --force`);
+      process.exitCode = 1;
+      return false;
+    }
+    console.log(`${name} is on setup v${SETUP_VERSION}.`);
+  }
+  const { rebootRequired } = await checkUpdate(ip);
+  if (!rebootRequired) return true;
+  if (!opts.reboot) {
+    console.log(`${name} needs a reboot to finish installing updates. When nothing's running: pnpm cli update ${name} --reboot`);
+    return true;
+  }
+  console.log(`Rebooting ${name}...`);
+  await runRemote(ip, "sudo systemctl reboot");
+  await new Promise((resolve) => setTimeout(resolve, 10_000));
+  await waitForCloudInit(ip);
+  console.log(`${name} is back.`);
+  return true;
+}
+
+program
   .command("sleep <vm>")
   .description("Put a VM to sleep so it costs only storage (DigitalOcean: snapshot + delete; AWS: stop)")
   .option("-y, --yes", "skip confirmation")
@@ -426,6 +519,7 @@ program
     console.log(`  public IP: ${woken.publicIp}`);
     await waitForCloudInit(woken.publicIp!);
     console.log(`Ready. Connect with: pnpm cli ssh ${vm.name}`);
+    await printUpdateHint(vm.name, woken.publicIp!);
   });
 
 program

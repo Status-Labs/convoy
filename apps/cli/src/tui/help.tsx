@@ -12,6 +12,7 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
       ["s", "sleep / wake"],
       ["a", "auto-sleep on/off"],
       ["b", "snapshot"],
+      ["u", "update Convoy setup"],
       ["→", "full details"],
       ["d", "delete"],
     ],

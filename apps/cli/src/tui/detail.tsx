@@ -11,6 +11,8 @@ import {
   type FleetVm,
   type MetricsSample,
   type VmInfo,
+  SETUP_VERSION,
+  updateStatus,
 } from "@convoy/core";
 import { streamMetrics, vmInfo } from "../ssh";
 import { Key } from "./ui";
@@ -168,9 +170,22 @@ function SetupBadge({ setup }: { setup: string }) {
 function InfoSection({ info }: { info: Loadable<VmInfo> }) {
   if (info.state === "loading") return <Spinner label="Reading what's on the VM…" />;
   if (info.state === "error") return <Text color="red">Couldn't read the VM: {info.error}</Text>;
-  const { tools, desktop, tailscale, github, identity, repos, tmux } = info.value;
+  const { tools, desktop, tailscale, github, identity, repos, tmux, setupVersion, rebootRequired } = info.value;
+  const update = updateStatus(setupVersion);
   return (
     <>
+      <Field label="Convoy">
+        {update.state === "current" ? (
+          `setup v${setupVersion}, up to date`
+        ) : update.state === "newer" ? (
+          <Text color="yellow">setup v{setupVersion}, newer than this Convoy (git pull)</Text>
+        ) : (
+          <Text color={update.state === "security" ? "red" : "yellow"}>
+            setup v{setupVersion} → v{SETUP_VERSION}: {update.notes.join("; ")} (esc, then u to update)
+          </Text>
+        )}
+        {rebootRequired ? <Text color="yellow"> · reboot pending</Text> : null}
+      </Field>
       <Field label="Tools">
         {tools.length === 0 ? "—" : tools.map((t) => `${t.name} ${t.version}`).join("  ·  ")}
       </Field>

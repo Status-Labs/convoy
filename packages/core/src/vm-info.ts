@@ -11,6 +11,8 @@ if [ -f $state/failed ]; then put setup "failed: $(cat $state/failed)"
 elif [ -f $state/ready ]; then put setup ready
 elif [ -f $state/phase ]; then put setup "$(cat $state/phase)"
 else put setup "updating packages"; fi
+if [ -f /etc/convoy/version ]; then put convoy "$(cat /etc/convoy/version)"; else put convoy 0; fi
+if [ -f /var/run/reboot-required ]; then put reboot yes; fi
 ver() { command -v "$2" >/dev/null && put "tool:$1" "$("$2" --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\\.[0-9]+(\\.[0-9]+)?' | head -n1)"; }
 ver "Claude Code" claude
 ver "Codex" codex
@@ -39,6 +41,10 @@ true
 export interface VmInfo {
   /** "ready", "failed: <step>", or the current setup phase. */
   setup: string;
+  /** Convoy setup version (/etc/convoy/version); 0 for VMs set up before versions existed. */
+  setupVersion: number;
+  /** A reboot is needed to finish installing updates. */
+  rebootRequired: boolean;
   tools: { name: string; version: string }[];
   /** systemd state of the desktop ("active"), or null without one. */
   desktop: string | null;
@@ -53,13 +59,15 @@ export interface VmInfo {
 }
 
 export function parseVmInfo(stdout: string): VmInfo {
-  const info: VmInfo = { setup: "unknown", tools: [], desktop: null, tailscale: null, github: null, identity: null, repos: [], tmux: [] };
+  const info: VmInfo = { setup: "unknown", setupVersion: 0, rebootRequired: false, tools: [], desktop: null, tailscale: null, github: null, identity: null, repos: [], tmux: [] };
   for (const line of stdout.split("\n")) {
     const tab = line.indexOf("\t");
     if (tab < 0) continue;
     const key = line.slice(0, tab);
     const value = line.slice(tab + 1).trim();
     if (key === "setup") info.setup = value;
+    else if (key === "convoy") info.setupVersion = Number.parseInt(value, 10) || 0;
+    else if (key === "reboot") info.rebootRequired = true;
     else if (key.startsWith("tool:")) info.tools.push({ name: key.slice(5), version: value });
     else if (key === "desktop") info.desktop = value;
     else if (key === "tailscale") {

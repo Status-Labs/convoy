@@ -28,6 +28,8 @@ In the TUI, tabs `1` VMs, `2` Snapshots and `3` Projects (or `tab`) switch views
 
 **Snapshots.** Set a VM up once, press `b` to save a snapshot, then launch copies of it from the Snapshots view (`tab`): each copy is ready in about a minute with the same tools, files and API keys. Copies come up signed out of Claude and ChatGPT plans, which are never copied between machines. DigitalOcean only for now; $0.06 per GB per month. The list also shows `untagged` snapshots named like a Convoy VM (`convoy-…`, or `agent-vm-…` from before the rename), such as ones from older versions, so you can delete them. See [docs/snapshots.md](docs/snapshots.md).
 
+**Updates.** When a new Convoy changes what's on VMs (a security fix to the baseline, a newer Node.js, a new tool version), existing VMs get it without being recreated. The list marks VMs that are behind with `↑ update`, or `↑ security` in red, and the inspector shows what's new. Press `u` on the VM, or run `pnpm cli update <vm>`. The update runs over SSH: it re-applies the security baseline and updates the CLIs and agent tools, while agents and SSH sessions keep running. Nothing reboots unless you ask (`--reboot`). `pnpm cli update` with no VM shows which VMs need it, and `--all` updates them all. See [docs/updates.md](docs/updates.md).
+
 **Projects** group VMs, e.g. one per codebase or client. Press `p` to create or switch projects; new VMs launch into the current one and the list shows only its VMs (or all projects). A project can list GitHub repos (`e` in the project list) that every new VM in it clones. A VM's project is stored as a tag on the VM at the cloud provider (DigitalOcean tag `convoy-project:<name>`, AWS tag `convoy-project`), so it's the same from any machine. OVHcloud doesn't support projects yet.
 
 The list shows each VM's hourly rate and its estimated cost so far this month, with totals at the top. Estimates come from list prices and run time: DigitalOcean bills per second (60s minimum, capped at the monthly price), so compute matches the bill; AWS rates come from the AWS Pricing API (needs `pricing:GetProducts`) and include the 40 GB disk and public IPv4 address. Not included: extra bandwidth, snapshots, and AWS burst-credit charges. DigitalOcean bills stopped VMs in full, which the list flags as `stopped, billed`.
@@ -54,6 +56,7 @@ pnpm cli keys <name>   # re-apply API keys, GITHUB_TOKEN and git identity to a V
 pnpm cli clone <name> owner/repo
 pnpm cli tailscale <name>  # put an existing VM on your tailnet
 pnpm cli desktop <name>    # open the VM's desktop (--install, --uninstall, --phone, --phone-off)
+pnpm cli update [name]     # bring a VM's setup up to date (no name: show which need it; --all)
 pnpm cli delete <name>
 
 pnpm cli --provider aws create   # launch on a non-default cloud
@@ -77,7 +80,7 @@ pnpm cli snapshot-delete <snapshot>
 Tools are installed for the `agent` user under `~/.local`, so they can update themselves without sudo.
 
 **Security baseline (always):**
-- Full package upgrade at first boot, then automatic security updates (`unattended-upgrades`)
+- Full package upgrade at first boot, then automatic security updates (`unattended-upgrades`); Convoy's own setup updates with `pnpm cli update`
 - SSH: key-only, `agent` user only, no root login, no passwords, limited auth attempts
 - Firewall (`ufw`): all inbound traffic denied except SSH
 - `fail2ban` bans IPs that repeatedly fail SSH login
