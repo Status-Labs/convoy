@@ -18,6 +18,8 @@ export interface DigitalOceanConfig {
   region: string;
   size: string;
   image: string;
+  /** DigitalOcean's automatic backups for new and woken droplets, from DO_BACKUPS. */
+  backups?: "daily" | "weekly";
 }
 
 export const digitalocean: ProviderDefinition = {
@@ -32,11 +34,19 @@ export const digitalocean: ProviderDefinition = {
       region: env.DO_REGION || "nyc1",
       size: env.DO_SIZE || "s-2vcpu-4gb",
       image: env.DO_IMAGE || "ubuntu-24-04-x64",
+      backups: backupsFromEnv(env.DO_BACKUPS),
     };
     const { region, size, image } = config;
     return { provider: new DigitalOceanProvider(config), defaults: { region, size, image } };
   },
 };
+
+function backupsFromEnv(value: string | undefined): DigitalOceanConfig["backups"] {
+  const v = value?.trim().toLowerCase();
+  if (!v || v === "off") return undefined;
+  if (v === "daily" || v === "weekly") return v;
+  throw new Error(`DO_BACKUPS must be daily, weekly or off (got "${value}").`);
+}
 
 // Droplets we manage carry this tag, which the API can filter on.
 const TAG = "convoy";
@@ -241,6 +251,7 @@ export class DigitalOceanProvider implements VmProvider {
       image: /^\d+$/.test(request.image ?? "") ? Number(request.image) : (request.image ?? this.config.image),
       user_data: request.userData,
       tags: request.project ? [TAG, PROJECT_TAG + request.project] : [TAG],
+      ...this.backupFields(),
     });
     return toVm(droplet);
   }
@@ -361,8 +372,18 @@ export class DigitalOceanProvider implements VmProvider {
       image: snapshot.id,
       user_data: userData,
       tags: [TAG, ...tags.filter((t) => t.startsWith(PROJECT_TAG))],
+      ...this.backupFields(),
     });
     return toVm(droplet);
+  }
+
+  // Backups belong to the droplet, so DigitalOcean deletes them with it, and
+  // sleep deletes the droplet (keeping a snapshot). Waking turns them on again.
+  private backupFields(): Record<string, unknown> {
+    const plan = this.config.backups;
+    if (!plan) return {};
+    // 08:00–12:00 UTC: night in the Americas. Weekly needs a day.
+    return { backups: true, backup_policy: { plan, hour: 8, ...(plan === "weekly" ? { weekday: "SUN" } : {}) } };
   }
 
   async finishWake(asleepId: string): Promise<void> {

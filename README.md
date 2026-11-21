@@ -32,11 +32,13 @@ In the TUI, tabs `1` VMs, `2` Snapshots and `3` Projects (or `tab`) switch views
 
 **Projects** group VMs, e.g. one per codebase or client. Press `p` to create or switch projects; new VMs launch into the current one and the list shows only its VMs (or all projects). A project can list GitHub repos (`e` in the project list) that every new VM in it clones. A VM's project is stored as a tag on the VM at the cloud provider (DigitalOcean tag `convoy-project:<name>`, AWS tag `convoy-project`), so it's the same from any machine. OVHcloud doesn't support projects yet.
 
-The list shows each VM's hourly rate and its estimated cost so far this month, with totals at the top. Estimates come from list prices and run time: DigitalOcean bills per second (60s minimum, capped at the monthly price), so compute matches the bill; AWS rates come from the AWS Pricing API (needs `pricing:GetProducts`) and include the 40 GB disk and public IPv4 address. Not included: extra bandwidth, snapshots, and AWS burst-credit charges. DigitalOcean bills stopped VMs in full, which the list flags as `stopped, billed`.
+The list shows each VM's hourly rate and its estimated cost so far this month, with totals at the top. Estimates come from list prices and run time: DigitalOcean bills per second (60s minimum, capped at the monthly price), so compute matches the bill; AWS rates come from the AWS Pricing API (needs `pricing:GetProducts`) and include the 40 GB disk and public IPv4 address. Not included: extra bandwidth, snapshots, DigitalOcean backups, and AWS burst-credit charges. DigitalOcean bills stopped VMs in full, which the list flags as `stopped, billed`.
 
 **Signing in agent tools.** At launch, choose *Sign in yourself* to use your Claude or ChatGPT plan (press `l` on the VM when it's ready), or *API keys from .env* for swarms: tools are signed in on boot, and you can launch up to 10 VMs at once. See [docs/agent-credentials.md](docs/agent-credentials.md).
 
 **GitHub.** Every VM has `git`, `gh` and GitLab's `glab`. Put a fine-grained `GITHUB_TOKEN` in `.env` and VMs can clone, pull and push your private repos (in either sign-in mode); commits are by the token's GitHub account, with its private noreply address. `pnpm cli clone <vm> owner/repo` clones one-off. See [docs/github.md](docs/github.md).
+
+**Backups.** Set `DO_BACKUPS=daily` (or `weekly`) in `.env` and new DigitalOcean VMs get DigitalOcean's automatic backups: no credentials on the VM, whole-disk restore. See [docs/backups.md](docs/backups.md).
 
 **MCP servers.** Each `MCP_<NAME>_URL` (and optional `MCP_<NAME>_TOKEN`) in `.env` is added to Claude Code and Codex on every VM, so agents share tools such as a task manager. See [docs/mcp.md](docs/mcp.md).
 
