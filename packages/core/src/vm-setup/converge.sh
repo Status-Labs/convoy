@@ -41,6 +41,7 @@ for script in "$LIB"/migrations/[0-9]*.sh; do
     applied=$number
   fi
 done
+echo "$applied" > /etc/convoy/migration
 
 phase "securing the VM"
 log "installing base packages"

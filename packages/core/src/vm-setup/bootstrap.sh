@@ -32,9 +32,14 @@ log "locking root password"
 usermod -L root
 chage -d "$(date +%F)" -M -1 root
 
-# A new VM already has what every migration so far would change.
-latest=$(find "$LIB/migrations" -name '[0-9]*.sh' -printf '%f\n' 2>/dev/null | sort | tail -n1 | cut -d- -f1)
-echo "${latest:-0}" > /etc/convoy/migration
+# A new VM already has what every migration so far would change. (The glob
+# sorts by number; the folder is missing while there are no migrations.)
+log "recording migrations"
+latest=0
+for script in "$LIB"/migrations/[0-9]*.sh; do
+  if [ -e "$script" ]; then latest=$(basename "$script" | cut -d- -f1); fi
+done
+echo "$latest" > /etc/convoy/migration
 
 # shellcheck source=/dev/null
 . "$LIB/converge.sh"
