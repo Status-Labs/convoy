@@ -25,7 +25,6 @@ import {
   tailscaleJoinScript,
   type AgentKeys,
   type CloneResult,
-  type GitIdentity,
   type RepoRef,
 } from "@convoy/core";
 import { CONFIG_DIR, configDir } from "./config-dir";
@@ -96,23 +95,12 @@ export function runScript(
 
 /**
  * Configures the VM's agent tools with the API keys from .env, signs git in
- * with the GitHub token and sets the commit identity. Returns false if there
- * was nothing to set up.
+ * with the GitHub token and sets the commit identity from the token's account
+ * (removing it when there's no token).
  */
-export async function installKeys(ip: string, keys: AgentKeys, identity?: GitIdentity | null): Promise<boolean> {
-  const script = keySetupScript(keys, identity);
-  if (!script) return false;
-  const { code, stderr } = await runScript(ip, script, { timeoutMs: 3 * 60_000 });
+export async function installKeys(ip: string, keys: AgentKeys): Promise<void> {
+  const { code, stderr } = await runScript(ip, keySetupScript(keys), { timeoutMs: 3 * 60_000 });
   if (code !== 0) throw new Error(`couldn't set up keys on the VM: ${stderr.split("\n").at(-1) || `exit ${code}`}`);
-  return true;
-}
-
-/** The commit author from the local git config, or null if it isn't set. */
-export function localGitIdentity(): GitIdentity | null {
-  const get = (key: string) => spawnSync("git", ["config", "--get", key], { encoding: "utf8" }).stdout?.trim();
-  const name = get("user.name");
-  const email = get("user.email");
-  return name && email ? { name, email } : null;
 }
 
 /** Clones GitHub repos into the VM's home directory, skipping ones already there. */

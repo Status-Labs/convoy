@@ -36,7 +36,7 @@ The list shows each VM's hourly rate and its estimated cost so far this month, w
 
 **Signing in agent tools.** At launch, choose *Sign in yourself* to use your Claude or ChatGPT plan (press `l` on the VM when it's ready), or *API keys from .env* for swarms: tools are signed in on boot, and you can launch up to 10 VMs at once. See [docs/agent-credentials.md](docs/agent-credentials.md).
 
-**GitHub.** Every VM has `git`, `gh` and GitLab's `glab`. Put a fine-grained `GITHUB_TOKEN` in `.env` and VMs can clone, pull and push your private repos (in either sign-in mode); commits use your local git name and email. `pnpm cli clone <vm> owner/repo` clones one-off. See [docs/github.md](docs/github.md).
+**GitHub.** Every VM has `git`, `gh` and GitLab's `glab`. Put a fine-grained `GITHUB_TOKEN` in `.env` and VMs can clone, pull and push your private repos (in either sign-in mode); commits are by the token's GitHub account, with its private noreply address. `pnpm cli clone <vm> owner/repo` clones one-off. See [docs/github.md](docs/github.md).
 
 **From your phone.** Tick *Tailscale* at the tools step (`create --tailscale`) to put the VM on your private Tailscale network. Your phone's SSH app can then connect from anywhere with `ssh agent@<vm-name>`, signed in with your Tailscale account, and no port is opened to the internet. See [docs/phone-access.md](docs/phone-access.md).
 
@@ -52,7 +52,7 @@ pnpm cli create        # launch a VM and wait for tools to install (--api-keys f
 pnpm cli list          # VMs on every enabled cloud
 pnpm cli ssh <name>    # --tmux for the persistent tmux session
 pnpm cli login <name>  # sign in agent tools with your own accounts
-pnpm cli keys <name>   # re-apply API keys, GITHUB_TOKEN and git identity to a VM
+pnpm cli keys <name>   # re-apply API keys and GITHUB_TOKEN to a VM
 pnpm cli clone <name> owner/repo
 pnpm cli tailscale <name>  # put an existing VM on your tailnet
 pnpm cli desktop <name>    # open the VM's desktop (--install, --uninstall, --phone, --phone-off)

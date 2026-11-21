@@ -45,5 +45,5 @@ If a VM was set up or updated by a newer Convoy than the one you're running, `up
 ## For contributors
 
 - `vm-setup/converge.sh` must be safe to re-run. CI runs the update twice on a fresh Ubuntu machine and fails if the second run changes anything.
-- Any change to what's on a VM (anything in `vm-setup/`, `tools.ts`, the `gh` and `glab` installs) adds an entry to `SETUP_RELEASES` in `vm-updates.ts`, with a one-line note users see. Mark it `security: true` when VMs should update promptly. CI fails a PR that changes those files without one.
+- Any change to what's on a VM (anything in `vm-setup/`, `tools.ts`, the `gh` and `glab` installs) adds an entry to `SETUP_RELEASES` in `vm-updates.ts`, with a one-line note users see. Mark it `security: true` when VMs should update promptly. CI builds the update script from the base branch and from the PR, and fails the PR if they differ without a new entry.
 - Re-running can't remove things. To delete a file or rename a folder on existing VMs, add a migration: see `vm-setup/migrations/README.md`.

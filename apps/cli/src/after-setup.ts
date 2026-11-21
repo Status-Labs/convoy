@@ -1,5 +1,5 @@
 import { keysForMode, parseRepo, type AgentKeys, type CloneResult, type SignInMode } from "@convoy/core";
-import { cloneRepos, installKeys, joinTailnet, localGitIdentity, runScript } from "./ssh";
+import { cloneRepos, installKeys, joinTailnet, runScript } from "./ssh";
 
 export interface AfterSetupOptions {
   name: string;
@@ -40,7 +40,7 @@ export async function afterSetup(ip: string, options: AfterSetupOptions): Promis
     }
   }
   try {
-    await installKeys(ip, keysForMode(keys, mode), localGitIdentity());
+    await installKeys(ip, keysForMode(keys, mode));
   } catch (err) {
     result.problems.push(`${errorText(err)} (retry: pnpm cli keys ${name})`);
   }

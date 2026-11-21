@@ -198,7 +198,7 @@ function InfoSection({ info }: { info: Loadable<VmInfo> }) {
           <Text dimColor>not signed in (GITHUB_TOKEN in .env, or l to sign in)</Text>
         )}
       </Field>
-      <Field label="Commits">{identity ? `by ${identity}` : <Text dimColor>no git identity (set user.name/email locally, then pnpm cli keys)</Text>}</Field>
+      <Field label="Commits">{identity ? `by ${identity}` : <Text dimColor>none (add GITHUB_TOKEN to .env, then pnpm cli keys)</Text>}</Field>
       <Field label="Repos">{repos.length > 0 ? repos.map((r) => `~/${r}`).join("  ") : <Text dimColor>none cloned</Text>}</Field>
       <Field label="Extras">
         {[

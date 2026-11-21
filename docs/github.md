@@ -25,9 +25,11 @@ On the VM, `gh` is signed in with the token and git uses it for `https://github.
 
 Press `l` on the VM (or `pnpm cli login <vm>`). If `gh` isn't signed in, it asks whether to sign in to GitHub, then gives you a code to enter at github.com. This gives the VM access to every repo your account can reach, so prefer a fine-grained token for VMs that run agents unattended.
 
-## Commits are yours
+## Who commits
 
-Convoy copies `user.name` and `user.email` from your local git config to each VM, so commits made there are attributed to you. If they aren't set locally, set them (`git config --global user.name "…"`), then run `pnpm cli keys <vm>`.
+Commits on a VM are by the GitHub account the VM is signed in as (from `GITHUB_TOKEN`, or `l` in the TUI), using that account's [noreply address](https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address), e.g. `12345+you@users.noreply.github.com`. Convoy never reads your local git config, so a real email address never reaches a VM or a commit. This isn't configurable.
+
+Without a GitHub sign-in a VM has no commit identity, and git refuses to commit. `pnpm cli keys <vm>` sets it again from `.env`, and removes any identity an older Convoy copied to the VM.
 
 ## Clone repos
 
