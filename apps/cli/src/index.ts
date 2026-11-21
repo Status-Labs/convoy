@@ -51,7 +51,6 @@ import {
   installKeys,
   joinTailnet,
   leaveTailnet,
-  localGitIdentity,
   uninstallDesktop,
   updateVm,
   openShell,
@@ -302,18 +301,16 @@ program
 
 program
   .command("keys <vm>")
-  .description("Set up the VM with the API keys and GITHUB_TOKEN in .env and your git identity (e.g. after changing a key)")
+  .description("Set up the VM with the API keys and GITHUB_TOKEN in .env (e.g. after changing a key)")
   .action(async (idOrName: string) => {
     const { name, ip } = await vmIp(idOrName);
     const keys = agentKeysFromEnv();
-    const identity = localGitIdentity();
-    if (!(await installKeys(ip, keys, identity))) {
-      throw new Error("Nothing to set up: no API keys or GITHUB_TOKEN in .env (see .env.example), and no git user.name/user.email.");
-    }
+    await installKeys(ip, keys);
     const done = [
       keys.anthropic || keys.openai ? "agent tools use the API keys from .env" : null,
-      keys.github ? "git uses GITHUB_TOKEN" : null,
-      identity ? `commits are by ${identity.name} <${identity.email}>` : null,
+      keys.github
+        ? "git uses GITHUB_TOKEN; commits are by its account's GitHub noreply address"
+        : "no GITHUB_TOKEN in .env, so the VM has no commit identity and git won't commit",
     ];
     console.log(`On ${name}: ${done.filter(Boolean).join("; ")}.`);
   });

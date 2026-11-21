@@ -35,17 +35,21 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @convoy/cli exec tsx scripts/print-update-script.ts > "$RUNNER_TEMP/update.sh"
       - name: Bump SETUP_VERSION with any change to what's on VMs
         if: github.event_name == 'pull_request'
         run: |
-          base=origin/${{ github.base_ref }}
-          if ! git diff --quiet "$base"...HEAD -- packages/core/src/vm-setup packages/core/src/tools.ts packages/core/src/github.ts packages/core/src/gitlab.ts; then
-            if ! git diff "$base"...HEAD -- packages/core/src/vm-updates.ts | grep -qE '^\+ +\{ version: [0-9]+'; then
+          # Compare the update script itself, built from the base branch and from this PR.
+          base=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          git checkout "$base" -- packages/core/src apps/cli/scripts
+          pnpm --filter @convoy/cli exec tsx scripts/print-update-script.ts > "$RUNNER_TEMP/base-update.sh"
+          git reset -q --hard HEAD && git clean -fdq packages/core/src apps/cli/scripts
+          if ! cmp -s "$RUNNER_TEMP/base-update.sh" "$RUNNER_TEMP/update.sh"; then
+            if ! git diff "$base" HEAD -- packages/core/src/vm-updates.ts | grep -qE '^\+ +\{ version: [0-9]+'; then
               echo "::error::This changes what's on VMs. Add a SETUP_RELEASES entry in packages/core/src/vm-updates.ts."
               exit 1
             fi
           fi
-      - run: pnpm --filter @convoy/cli exec tsx scripts/print-update-script.ts > "$RUNNER_TEMP/update.sh"
       - name: Prepare a machine like a Convoy VM before its first update
         run: |
           sudo apt-get install -y -q openssh-server

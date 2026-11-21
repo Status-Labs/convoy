@@ -1,5 +1,5 @@
 // GitHub access from agent VMs: the GitHub CLI on every VM, an optional
-// fine-grained token from .env (GITHUB_TOKEN) wired into git, the user's
+// fine-grained token from .env (GITHUB_TOKEN) wired into git, a private
 // commit identity, and repos cloned per project. See docs/github.md.
 
 /** Root commands that install GitHub's CLI from its signed apt repository. */
@@ -20,7 +20,8 @@ function shellQuote(value: string): string {
  * Bash lines, run as the agent user, that sign gh in with a token and make
  * plain `git clone`/`push` over https use it. The token goes in on stdin and
  * is stored only by gh (~/.config/gh/hosts.yml, mode 600). Installs gh first
- * on VMs launched before it was in the base setup.
+ * on VMs launched before it was in the base setup. Commits are by the token's
+ * account (IDENTITY_FROM_GH).
  */
 export function githubTokenLines(token: string): string[] {
   return [
@@ -30,18 +31,30 @@ export function githubTokenLines(token: string): string[] {
     `  echo "GitHub didn't accept GITHUB_TOKEN: $(printf '%s' "$out" | head -n1)" >&2; exit 1`,
     "fi",
     "gh auth setup-git --hostname github.com",
+    IDENTITY_FROM_GH,
   ];
 }
 
-export interface GitIdentity {
-  name: string;
-  email: string;
-}
+/**
+ * Bash that sets the commit identity to the account gh is signed in as, with
+ * its GitHub noreply address, so no real email ever reaches a VM or a commit.
+ * Not configurable on purpose.
+ */
+const IDENTITY_FROM_GH = [
+  `account=$(gh api user --jq '"\\(.login) \\(.id)+\\(.login)@users.noreply.github.com"')`,
+  'git config --global user.name "${account%% *}"',
+  'git config --global user.email "${account#* }"',
+].join("\n");
 
-/** Bash lines that set the commit author for the agent user. */
-export function gitIdentityLines({ name, email }: GitIdentity): string[] {
-  return [`git config --global user.name ${shellQuote(name)}`, `git config --global user.email ${shellQuote(email)}`];
-}
+/**
+ * Bash lines that remove the commit identity when there's no GitHub token, so
+ * a VM never keeps one it was given before (e.g. a real email copied by an
+ * older Convoy). Git then refuses to commit until a token is added.
+ */
+export const CLEAR_GIT_IDENTITY = [
+  "git config --global --unset-all user.name || true",
+  "git config --global --unset-all user.email || true",
+];
 
 export interface RepoRef {
   owner: string;
@@ -130,6 +143,10 @@ if command -v gh >/dev/null; then
         echo "GitHub sign-in didn't finish. Retry on the VM with: gh auth login --web && gh auth setup-git"
       fi
     fi
+  fi
+  if gh auth status --hostname github.com >/dev/null 2>&1; then
+${IDENTITY_FROM_GH.replace(/^/gm, "    ")}
+    echo "Commits are by $(git config --global user.name) <$(git config --global user.email)>."
   fi
 fi
 `;

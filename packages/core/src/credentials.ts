@@ -1,4 +1,4 @@
-import { GITHUB_SIGN_IN, githubTokenLines, gitIdentityLines, type GitIdentity } from "./github";
+import { CLEAR_GIT_IDENTITY, GITHUB_SIGN_IN, githubTokenLines } from "./github";
 import { TAILSCALE_SIGN_IN } from "./tailscale";
 import { AGENT_TOOLS, type ToolId } from "./tools";
 
@@ -79,12 +79,11 @@ function shellQuote(value: string): string {
 /**
  * Bash script that configures the agent tools installed on a VM with these
  * keys, signs gh and git in with the GitHub token, and sets the commit
- * identity. It contains the keys, so run it with `bash -s` over SSH (stdin),
+ * identity from the token's account (or clears it without one). It contains the keys, so run it with `bash -s` over SSH (stdin),
  * never as a command-line argument or in cloud-init user data. Returns null if
- * there's nothing to set up. Pass only the keys the sign-in mode allows.
+ * Pass only the keys the sign-in mode allows.
  */
-export function keySetupScript(keys: AgentKeys, identity?: GitIdentity | null): string | null {
-  if (!keys.anthropic && !keys.openai && !keys.github && !identity) return null;
+export function keySetupScript(keys: AgentKeys): string {
   const lines = [
     "set -euo pipefail",
     "umask 077",
@@ -109,9 +108,7 @@ export function keySetupScript(keys: AgentKeys, identity?: GitIdentity | null): 
       'if command -v opencode >/dev/null; then json_set "$HOME/.config/opencode/opencode.json" \'.provider.openai.options.apiKey = "{file:~/.config/convoy/openai-api-key}"\'; fi',
     );
   }
-  // Identity first: it can't fail, and a rejected token shouldn't skip it.
-  if (identity) lines.push(...gitIdentityLines(identity));
-  if (keys.github) lines.push(...githubTokenLines(keys.github));
+  lines.push(...(keys.github ? githubTokenLines(keys.github) : CLEAR_GIT_IDENTITY));
   return lines.join("\n") + "\n";
 }
 
