@@ -133,9 +133,41 @@ export function Inspector({ row, providerLabel, now, snapshots, width }: Inspect
               </Text>
             )}
           </Field>
+          {row.update ? (
+            <Field label="Setup">
+              <UpdateLine update={row.update} />
+            </Field>
+          ) : null}
         </Box>
       ) : null}
     </Box>
+  );
+}
+
+function UpdateLine({ update }: { update: NonNullable<Row["update"]> }) {
+  const { status, rebootRequired } = update;
+  const reboot = rebootRequired ? <Text color="yellow"> · reboot pending</Text> : null;
+  if (status.state === "security") {
+    return (
+      <Text>
+        <Text color="red">v{status.version} · security update</Text> <Text dimColor>(u)</Text>
+        {reboot}
+      </Text>
+    );
+  }
+  if (status.state === "available") {
+    return (
+      <Text>
+        <Text color="yellow">v{status.version} · update available</Text> <Text dimColor>(u)</Text>
+        {reboot}
+      </Text>
+    );
+  }
+  if (status.state === "newer") return <Text color="yellow">v{status.version} · newer than this Convoy</Text>;
+  return (
+    <Text>
+      v{status.version} · up to date{reboot}
+    </Text>
   );
 }
 

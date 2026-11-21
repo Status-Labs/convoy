@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  # Runs `convoy update` twice on a fresh Ubuntu machine: the first run must
+  # succeed and the second must change nothing.
+  vm-setup:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bump SETUP_VERSION with any change to what's on VMs
+        if: github.event_name == 'pull_request'
+        run: |
+          base=origin/${{ github.base_ref }}
+          if ! git diff --quiet "$base"...HEAD -- packages/core/src/vm-setup packages/core/src/tools.ts packages/core/src/github.ts packages/core/src/gitlab.ts; then
+            if ! git diff "$base"...HEAD -- packages/core/src/vm-updates.ts | grep -qE '^\+ +\{ version: [0-9]+'; then
+              echo "::error::This changes what's on VMs. Add a SETUP_RELEASES entry in packages/core/src/vm-updates.ts."
+              exit 1
+            fi
+          fi
+      - run: pnpm --filter @convoy/cli exec tsx scripts/print-update-script.ts > "$RUNNER_TEMP/update.sh"
+      - name: Prepare a machine like a Convoy VM before its first update
+        run: |
+          sudo apt-get install -y -q openssh-server
+          sudo useradd -m -s /bin/bash agent
+          sudo install -d /etc/convoy
+          echo codex | sudo tee /etc/convoy/tools
+      - name: First update
+        run: sudo bash "$RUNNER_TEMP/update.sh" < /dev/null
+      - run: sudo .github/vm-setup-state.sh > "$RUNNER_TEMP/first.txt"
+      - name: Second update
+        run: sudo bash "$RUNNER_TEMP/update.sh" < /dev/null
+      - run: sudo .github/vm-setup-state.sh > "$RUNNER_TEMP/second.txt"
+      - name: The second update changed nothing
+        run: diff -u "$RUNNER_TEMP/first.txt" "$RUNNER_TEMP/second.txt"
+      - run: test "$(cat /etc/convoy/version)" -ge 1 && sudo -u agent bash -lc 'export PATH=$HOME/.local/bin:$PATH; codex --version'

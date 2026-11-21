@@ -120,11 +120,29 @@ This proves the OVH API, quotas, boot time and the tool install script before we
 We use Convoy for our own agent work before anyone else does. Each step is small and works on its own. v1 is a few VMs, one per repo: the user signs in to their own Claude subscription on each, drives the lead agent there, and connects over Tailscale (phone included). Other designs (a hub VM driving child VMs, cloud agent sessions) get assessed after v1.
 
 1. [x] Rename to Convoy everywhere: README title, package names (`@convoy/core`, `@convoy/cli`), the `convoy` command and the config folder (`~/.config/convoy`, reading the old `agent-vm` one if it's there).
-2. [ ] One VM per repo, with any extra repos the agent needs cloned side by side (`~/app`, `~/docs`). One lead agent runs on it and starts subagents for parallel work. Already supported by project repos; document the setup in `docs/`.
-3. [ ] Extra services on VMs: chosen `.env` values (a task manager's URL and token, say) copied over SSH like `GITHUB_TOKEN` (re-applied by `keys`), and their MCP servers registered with Claude Code and Codex during setup.
-4. [ ] Commit identity for agents: an optional `GIT_AGENT_NAME` / `GIT_AGENT_EMAIL` in `.env` sets the VM's git identity to a machine account instead of copying yours, and a git `prepare-commit-msg` hook adds an `Agent: <tool> on convoy <vm>` trailer. Subagents share the identity.
-5. [ ] End to end on one repo: an agent on a VM picks up a task, opens a PR, and a human merges it.
-6. [ ] Write down what hurts after two weeks; that drives the next steps (likely: start an agent on a task in one command, and auto-sleep on by default for agent VMs).
+2. [ ] Update VMs in place: when Convoy ships a fix, a feature or a security patch, existing VMs get it without being recreated. The user is told a VM is out of date and runs the update themselves, from the CLI or on the VM. See [Keeping VMs up to date](#keeping-vms-up-to-date). Comes before the steps below, because they put more setup on VMs.
+3. [ ] One VM per repo, with any extra repos the agent needs cloned side by side (`~/app`, `~/docs`). One lead agent runs on it and starts subagents for parallel work. Already supported by project repos; document the setup in `docs/`.
+4. [ ] Extra services on VMs: chosen `.env` values (a task manager's URL and token, say) copied over SSH like `GITHUB_TOKEN` (re-applied by `keys`), and their MCP servers registered with Claude Code and Codex during setup.
+5. [ ] Commit identity for agents: an optional `GIT_AGENT_NAME` / `GIT_AGENT_EMAIL` in `.env` sets the VM's git identity to a machine account instead of copying yours, and a git `prepare-commit-msg` hook adds an `Agent: <tool> on convoy <vm>` trailer. Subagents share the identity.
+6. [ ] End to end on one repo: an agent on a VM picks up a task, opens a PR, and a human merges it.
+7. [ ] Write down what hurts after two weeks; that drives the next steps (likely: start an agent on a task in one command, and auto-sleep on by default for agent VMs).
+
+### Keeping VMs up to date
+
+A VM used to be set up once, by cloud-init at first boot, with nothing to bring it forward later. Ubuntu's security updates arrive through `unattended-upgrades`, but Convoy's own setup didn't: the SSH config, firewall, AppArmor profile, sysctl, Node, and the npm-installed agent tools.
+
+We tell the user and let them choose when to update. Convoy never changes a running VM on its own, because an agent may be mid-task. How it works for users is in [docs/updates.md](docs/updates.md).
+
+1. [x] **Re-runnable setup.** `bootstrap.sh` does only what a new machine needs (lock root, mark migrations as applied, install the extras picked at launch). Everything else is in `converge.sh`, which is safe to repeat. CI runs the update twice on a fresh Ubuntu runner and fails if the second run changes anything.
+2. [x] **Migrations** for what re-running can't express (removing a file, renaming a folder): `vm-setup/migrations/NNNN-<what>.sh`, applied in order, each once. The VM records the last one applied.
+3. [x] **Setup versions.** `SETUP_RELEASES` in `vm-updates.ts` lists each change to what's on VMs, with a note and an optional security flag. `converge.sh` writes the version to `/etc/convoy/version`. CI fails a PR that changes VM setup without a new entry.
+4. [x] **Telling the user, in the CLI and TUI.** The TUI reads each running VM's version over SSH every 10 minutes. The list shows `↑ update` or a red `↑ security`, and the inspector shows what's new. `convoy update` lists every VM's status. `wake` and `create --snapshot` say when a VM is behind. A VM newer than the CLI is never downgraded.
+5. [x] **Updating from the CLI:** `convoy update <vm>`, `--all`, or `u` in the TUI. It sends the CLI's own setup files over SSH and runs `converge.sh`. `--reboot` reboots if updates need it; nothing reboots otherwise.
+6. [ ] **Updating on the VM.**
+   - Tagged Convoy releases, with each release's setup files as a signed bundle.
+   - A daily timer on the VM checks the latest release of the repo it came from (`/etc/convoy/source`, so forks check their own). It only reads; it runs nothing it downloads.
+   - The login message shows the new version, its note and the command to run.
+   - `sudo convoy-update` downloads the bundle, checks its signature against a public key put on the VM at first boot, and runs the same `converge.sh`.
 
 ### Stage 2: web app and backend
 1. **Skeleton:** auth, database, empty dashboard.

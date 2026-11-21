@@ -14,3 +14,4 @@ export * from "./github";
 export * from "./metrics";
 export * from "./vm-info";
 export * from "./idle";
+export * from "./vm-updates";

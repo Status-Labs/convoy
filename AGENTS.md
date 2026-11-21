@@ -13,6 +13,7 @@ Convoy: launch isolated cloud VMs preloaded with AI agent tools, with one comman
 - Never put cloud provider tokens on VMs. VMs get only what they need to work: model API keys, `GITHUB_TOKEN`, and any service tokens the user adds to `.env`.
 - Secrets reach VMs over SSH, never through cloud-init / user data (providers keep it).
 - Every VM keeps the security baseline in the README: SSH key only, ufw, fail2ban, Docker ports closed.
+- VM setup must be safe to re-run: `convoy update` runs `vm-setup/converge.sh` on existing VMs. Any change to what's on a VM (`vm-setup/`, `tools.ts`, the gh/glab installs) adds a `SETUP_RELEASES` entry in `vm-updates.ts`. Removing or renaming something on existing VMs needs a migration (`vm-setup/migrations/`). CI checks the release entry and that a second run changes nothing. See `docs/updates.md`.
 
 ## Commands
 

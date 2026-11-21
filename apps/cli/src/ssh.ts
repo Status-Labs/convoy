@@ -14,6 +14,9 @@ import {
   type MetricsSample,
   type VmInfo,
   TAILSCALE_LEAVE_SCRIPT,
+  UPDATE_CHECK_SCRIPT,
+  parseUpdateCheck,
+  updateScript,
   cloneScript,
   desktopInstallScript,
   parseCloneOutput,
@@ -161,6 +164,25 @@ export function installDesktop(ip: string): Promise<number> {
     child.on("error", () => resolve(1));
     child.stdin.end(desktopInstallScript());
   });
+}
+
+/** Brings the VM to this Convoy's setup (see vm-updates.ts), showing the update's progress. */
+export function updateVm(ip: string): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn("ssh", [...sshArgs(ip, ["-o", "BatchMode=yes"]), "sudo bash -s"], {
+      stdio: ["pipe", "inherit", "inherit"],
+    });
+    child.on("exit", (code) => resolve(code ?? 1));
+    child.on("error", () => resolve(1));
+    child.stdin.end(updateScript());
+  });
+}
+
+/** The VM's Convoy setup version and whether it needs a reboot. */
+export async function checkUpdate(ip: string): Promise<{ version: number; rebootRequired: boolean }> {
+  const { code, stdout, stderr } = await runScript(ip, UPDATE_CHECK_SCRIPT, { timeoutMs: 20_000 });
+  if (code !== 0) throw new Error(stderr.split("\n").at(-1) || `couldn't reach the VM (exit ${code})`);
+  return parseUpdateCheck(stdout);
 }
 
 /** Removes the desktop from a VM to free its RAM and disk. */

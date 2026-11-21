@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Box, Text } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { formatCost, formatMinutes, formatRate, hourlyRate, monthToDateCost, type FleetVm } from "@convoy/core";
+import { formatCost, formatMinutes, formatRate, hourlyRate, monthToDateCost, type FleetVm, type UpdateStatus } from "@convoy/core";
 import { fit, Glyph, type Tone } from "./ui";
 
 export type Phase = "creating" | "booting" | "installing" | "ready" | "failed";
@@ -29,6 +29,13 @@ export interface Row {
   busy?: string;
   /** Minutes of idleness before auto-sleep, if on. */
   autosleep?: number;
+  /** Convoy setup version check, once it's been read from the VM. */
+  update?: { status: UpdateStatus; rebootRequired: boolean };
+}
+
+/** The VM's setup is behind this Convoy's. */
+export function needsUpdate(row: Row): boolean {
+  return row.update?.status.state === "available" || row.update?.status.state === "security";
 }
 
 export function rowProject(row: Row): string | null {
@@ -82,8 +89,10 @@ export function rowStatus(row: Row): string {
   if (activity) return activity;
   if (row.job?.phase === "failed") return "setup failed";
   switch (row.vm?.status) {
-    case "running":
-      return row.autosleep ? `running  zz ${formatMinutes(row.autosleep)}` : "running";
+    case "running": {
+      const flag = row.update?.status.state === "security" ? "  ↑ security" : needsUpdate(row) ? "  ↑ update" : "";
+      return `running${row.autosleep ? `  zz ${formatMinutes(row.autosleep)}` : ""}${flag}`;
+    }
     case "asleep":
       return "asleep";
     case "stopped":
@@ -160,7 +169,11 @@ export function VmList({ rows, selected, width, height, compact, grouped, provid
     const vm = row.vm;
     const activity = rowActivity(row);
     const status = rowStatus(row);
-    const statusColor = rowTone(row) === "failed" ? "red" : activity ? "yellow" : rowTone(row) === "asleep" ? "blue" : undefined;
+    const statusColor =
+      rowTone(row) === "failed" || (!activity && row.update?.status.state === "security") ? "red"
+      : activity || (row.vm?.status === "running" && needsUpdate(row)) ? "yellow"
+      : rowTone(row) === "asleep" ? "blue"
+      : undefined;
     return (
       <Box key={row.key} flexShrink={0}>
         <Text color="cyan">{isSelected ? "❯ " : "  "}</Text>
