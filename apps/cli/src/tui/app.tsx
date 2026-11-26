@@ -304,7 +304,10 @@ export function App({ fleet, launchPrefs: initialPrefs, sshKeyPath, keys, projec
       }
     });
     const timer = setInterval(() => {
-      const { list: vms, busy: inProgress, autosleep: limits } = latest.current;
+      // Re-read the settings each time: `pnpm cli autosleep` or another TUI may have changed them.
+      const limits = loadAutosleep();
+      if (JSON.stringify(limits) !== JSON.stringify(latest.current.autosleep)) setAutosleep(limits);
+      const { list: vms, busy: inProgress } = latest.current;
       if (vms && Object.keys(limits).length > 0) void sleeper.check(vms.filter((vm) => !inProgress[vm.name]), limits);
     }, IDLE_CHECK_MS);
     return () => clearInterval(timer);
