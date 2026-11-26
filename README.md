@@ -12,6 +12,7 @@ Requires Node.js 22+, pnpm, and an account with at least one provider: a Digital
 ```sh
 pnpm install
 cp .env.example .env   # fill in credentials for one or more providers
+pnpm env:sync          # later: add new settings from .env.example, keeping yours
 
 pnpm cli               # open the interactive TUI
 ```
